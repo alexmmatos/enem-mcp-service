@@ -70,7 +70,7 @@ async function seedSingleQuestion(question: Record<string, unknown>) {
 }
 
 async function create(count = 3) {
-  return service.createExam({ year: YEAR, numberOfQuestions: count });
+  return service.createExam({ disciplina: "Matemática", numberOfQuestions: count });
 }
 
 async function internal(questionId: string) {
@@ -84,10 +84,12 @@ describe("ExamService", () => {
     const response = await create(5);
     const attempt = await db.collection<ExamAttemptDoc>(ATTEMPTS_COLLECTION).findOne({ _id: response.exam.id });
     const ids = attempt!.questionIds;
-    expect(response.exam).toMatchObject({ status: "in_progress", topic: "ENEM", level: "enem", year: YEAR });
+    expect(response.exam).toMatchObject({ status: "in_progress", topic: "ENEM", level: "enem", disciplina: "Matemática" });
     expect(response.progress).toMatchObject({ current: 1, total: 5, answered: 0, correct: 0 });
     expect(attempt!.sessionId).toBeTruthy();
-    expect(ids).toEqual(["enem-2022-1", "enem-2022-2", "enem-2022-3", "enem-2022-4", "enem-2022-5"]);
+    expect(ids).toHaveLength(5);
+    expect(new Set(ids).size).toBe(5);
+    expect(ids.every((id) => /^enem-2022-\d+$/.test(id))).toBe(true);
 
     const cached = await internal(ids[0]!);
     expect(cached.topic).toBe("Matemática");

@@ -27,7 +27,7 @@ export interface AnswerResult {
   explanation: string;
 }
 
-export interface ExamSummary { id: string; status: ExamStatus; topic: Topic; level: Level; year?: number }
+export interface ExamSummary { id: string; status: ExamStatus; topic: Topic; level: Level; disciplina: string }
 
 export interface ExamToolResponse {
   exam: ExamSummary;

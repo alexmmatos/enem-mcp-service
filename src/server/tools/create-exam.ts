@@ -2,7 +2,7 @@ import { ExamService } from "../services/exam.service.js";
 import { runTool } from "./tool-response.js";
 
 interface Input {
-  year: number;
+  disciplina: string;
   numberOfQuestions: number;
   userId?: string | undefined;
   sessionId?: string | undefined;

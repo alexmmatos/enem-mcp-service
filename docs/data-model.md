@@ -33,8 +33,8 @@ Um documento por tentativa de prova.
 | `status` | string | `in_progress` \| `paused` \| `finished` |
 | `topic` | string | sempre `"ENEM"` |
 | `level` | string | sempre `"enem"` |
-| `enemYear?` | number | ano da prova, exposto como `ExamSummary.year` |
-| `questionIds` | `string[]` | array real da ordem oficial de `questions._id`, sem embaralhar |
+| `disciplina` | string | label escolhida (`Linguagens`, `Ciências Humanas`, `Ciências da Natureza`, `Matemática`) ou `"todas"`; exposta como `ExamSummary.disciplina` |
+| `questionIds` | `string[]` | array real de `questions._id`, sorteadas aleatoriamente (`$sample`) dentre todos os anos que batem com a disciplina |
 | `currentQuestionIndex` | number | posição atual em `questionIds`; só avança em `submit_answer` |
 | `score` | number | contagem de acertos |
 | `startedAt`, `updatedAt`, `finishedAt?` | Date | |

@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import type { ClientSession, Db, MongoClient } from "mongodb";
-import { EXAM_STATUSES, LEVELS, TOPICS, type ExamStatus, type Level, type Topic } from "../../shared/constants/exam.js";
+import { disciplineValueFromLabel, EXAM_STATUSES, LEVELS, TOPICS, type ExamStatus, type Level, type Topic } from "../../shared/constants/exam.js";
 import type { AnswerResult, ExamProgress, ExamToolResponse } from "../../shared/types/exam.js";
 import { db as defaultDb, mongoClient as defaultMongoClient } from "../db.js";
 import { ExamError } from "../errors/exam-error.js";
-import { fetchEnemQuestions } from "../repositories/enem.repository.js";
+import { fetchEnemQuestionsByDiscipline } from "../repositories/enem.repository.js";
 import { findQuestion, upsertQuestions, type InternalQuestion } from "../repositories/question.repository.js";
 import { enemQuestionToData, toPublicQuestion } from "./question.service.js";
 
@@ -21,7 +21,7 @@ export interface ExamAttemptDoc {
   questionIds: string[];
   currentQuestionIndex: number;
   score: number;
-  enemYear?: number;
+  disciplina: string;
   startedAt: Date;
   updatedAt: Date;
   finishedAt?: Date;
@@ -36,7 +36,7 @@ export interface ExamAnswerDoc {
 }
 
 interface CreateExamArgs {
-  year: number;
+  disciplina: string;
   numberOfQuestions: number;
   userId?: string | undefined;
   sessionId?: string | undefined;
@@ -115,7 +115,7 @@ async function responseFor(
       status: examStatus(attempt.status),
       topic: examTopic(attempt.topic),
       level: examLevel(attempt.level),
-      ...(attempt.enemYear ? { year: attempt.enemYear } : {}),
+      disciplina: attempt.disciplina,
     },
     progress: progressOf(attempt, answered),
     ...(question ? { question } : {}),
@@ -139,16 +139,18 @@ export class ExamService {
   ) {}
 
   async createExam(args: CreateExamArgs): Promise<ExamToolResponse> {
-    const year = args.year;
-    const fetched = await fetchEnemQuestions(this.db, year, args.numberOfQuestions);
+    // A integração fala em label ("Ciências da Natureza") ou "todas"; enem_questions.discipline
+    // guarda o value bruto do ENEM ("ciencias-natureza") — traduz só pra consultar.
+    const discipline = args.disciplina === "todas" ? "all" : (disciplineValueFromLabel(args.disciplina) ?? args.disciplina);
+    const fetched = await fetchEnemQuestionsByDiscipline(this.db, discipline, args.numberOfQuestions);
     if (fetched.length < args.numberOfQuestions) {
       throw new ExamError(
         "INSUFFICIENT_QUESTIONS",
-        `A prova do ENEM ${year} tem apenas ${fetched.length} questões disponíveis a partir do início.`,
+        `Só há ${fetched.length} questões disponíveis para "${args.disciplina}".`,
         { available: fetched.length, requested: args.numberOfQuestions },
       );
     }
-    const data = fetched.map((question) => enemQuestionToData(question, year));
+    const data = fetched.map((question) => enemQuestionToData(question));
     await upsertQuestions(this.db, data);
 
     const now = new Date();
@@ -159,7 +161,7 @@ export class ExamService {
       status: "in_progress",
       topic: "ENEM",
       level: "enem",
-      enemYear: year,
+      disciplina: args.disciplina,
       questionIds: data.map((item) => item._id),
       currentQuestionIndex: 0,
       score: 0,

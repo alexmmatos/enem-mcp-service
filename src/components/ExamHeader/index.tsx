@@ -11,7 +11,7 @@ interface Props { displayMode: DisplayMode; onSetDisplayMode: (mode: RequestDisp
 
 export function ExamHeader({ displayMode, onSetDisplayMode }: Props) {
   return <header className={styles.topbar}>
-    <div><p className={styles.eyebrow}>Tech Exam</p><h1 className={styles.title}>Prova de tecnologia</h1></div>
+    <div><p className={styles.eyebrow}>ENEM APP</p><h1 className={styles.title}>Simulado ENEM</h1></div>
     <div className={styles.row}>
       {MODES.map(({ mode, title, path }) => (
         <button

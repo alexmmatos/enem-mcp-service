@@ -10,6 +10,7 @@ const enemAlternativeSchema = z.object({
 });
 
 const enemQuestionSchema = z.object({
+  year: z.number(),
   index: z.number(),
   discipline: z.string(),
   context: z.string().nullable(),
@@ -18,36 +19,33 @@ const enemQuestionSchema = z.object({
   alternatives: z.array(enemAlternativeSchema).min(1),
 });
 
-const examDetailsSchema = z.object({
-  languages: z.array(z.object({ value: z.string() })),
-});
-
 export type EnemQuestion = z.infer<typeof enemQuestionSchema>;
 
 // Questões e metadados de prova já vêm semeados no Mongo por scripts/seed-mongo.ts (a partir de
 // data/enem/) — nenhuma chamada de rede aqui. `enem_questions` guarda uma variante por idioma
-// pra questões de língua estrangeira (índices 1–5); resolvemos pro idioma padrão da prova
-// (primeiro de `enem_exams.languages`), igual à API pública do ENEM fazia.
-export async function fetchEnemQuestions(db: Db, year: number, limit: number, offset = 0): Promise<EnemQuestion[]> {
-  const exam = examDetailsSchema.safeParse(await db.collection<{ _id: number }>("enem_exams").findOne({ _id: year }));
-  if (!exam.success) {
-    throw new ExamError("ENEM_API_ERROR", `A prova do ENEM ${year} não foi encontrada na base.`, { year });
-  }
-  const language = exam.data.languages[0]?.value;
+// pra questões de língua estrangeira (índices 1–5, sempre discipline "linguagens"); resolvemos
+// pro idioma padrão de cada prova (primeiro de `enem_exams.languages`), igual à API pública do
+// ENEM fazia — só que agora cruzando todos os anos, já que a seleção é por disciplina, não por
+// uma prova específica.
+export async function fetchEnemQuestionsByDiscipline(db: Db, discipline: string, limit: number): Promise<EnemQuestion[]> {
+  const exams = await db.collection<{ _id: number; languages: Array<{ value: string }> }>("enem_exams").find({}).toArray();
+  if (!exams.length) throw new ExamError("ENEM_API_ERROR", "Nenhuma prova do ENEM encontrada na base.", { discipline });
+
+  const languageMatches = exams.flatMap(({ _id: year, languages }) => (
+    languages[0] ? [{ year, language: languages[0].value }] : []
+  ));
+
+  const match: Record<string, unknown> = { $or: [{ language: null }, ...languageMatches] };
+  if (discipline !== "all") match.discipline = discipline;
 
   const docs = await db.collection("enem_questions")
-    .find({
-      year,
-      index: { $gte: offset, $lte: offset + limit },
-      ...(language ? { $or: [{ language }, { language: null }] } : { language: null }),
-    })
-    .sort({ index: 1 })
+    .aggregate([{ $match: match }, { $sample: { size: limit } }])
     .toArray();
 
   return docs.map((doc) => {
     const parsed = enemQuestionSchema.safeParse(doc);
     if (!parsed.success) {
-      throw new ExamError("ENEM_API_ERROR", `A questão ${String(doc.index)} do ENEM ${year} não pôde ser carregada.`, { year, index: doc.index });
+      throw new ExamError("ENEM_API_ERROR", "Uma questão do ENEM não pôde ser carregada.", { discipline, questionId: doc._id as unknown });
     }
     return parsed.data;
   });

@@ -56,7 +56,7 @@ npm start
 
 | Tool | Efeito |
 | --- | --- |
-| `create_exam` | Busca `numberOfQuestions` questões oficiais do ENEM do `year` informado em `api.enem.dev`, cacheia localmente, persiste a ordem oficial e abre a view. |
+| `create_exam` | Sorteia `numberOfQuestions` questões oficiais do ENEM da `disciplina` informada (ou de todas, com `"todas"`), entre todos os anos disponíveis, persiste a tentativa e abre a view. |
 | `get_current_question` | Retorna a questão ainda não respondida sem avançar. |
 | `submit_answer` | Valida e persiste uma resposta de forma transacional e idempotente, revela o feedback e avança uma vez. |
 | `pause_exam` | Pausa sem remover progresso. |
@@ -68,7 +68,7 @@ Todas retornam uma estrutura consistente com `exam`, `progress`, `question?` e `
 
 ## Provas do ENEM
 
-`create_exam` aceita `year` (ano da prova) e `numberOfQuestions` (quantas questões, a partir do início da prova). O servidor busca as questões já semeadas no MongoDB (`enem_questions`/`enem_exams` — ver "Instalação e dados"), grava uma cópia normalizada em `questions` (`_id` no formato `enem-{year}-{index}`) e monta a tentativa preservando a ordem oficial, sem embaralhar. As alternativas usam as letras originais (A–E) e podem ser texto ou imagem (algumas questões, sobretudo química/física de provas antigas, têm alternativas só com figura, hospedada no Cloudinary). Como a fonte não traz explicação pedagógica, o campo `explanation` só informa o gabarito oficial. Ano sem dados no Mongo ou formato inesperado retornam `ENEM_API_ERROR`; pedir mais questões do que a prova daquele ano tem retorna `INSUFFICIENT_QUESTIONS`.
+`create_exam` aceita `disciplina` (`Linguagens`, `Ciências Humanas`, `Ciências da Natureza`, `Matemática`, ou `"todas"` para misturar todas) e `numberOfQuestions`. O servidor sorteia questões dessa disciplina entre todos os anos já semeados no MongoDB (`enem_questions`/`enem_exams` — ver "Instalação e dados", amostragem aleatória via `$sample`, sem repetir questão na mesma prova), grava uma cópia normalizada em `questions` (`_id` no formato `enem-{year}-{index}`) e monta a tentativa com essa seleção — sem replicar a ordem de nenhuma prova específica. As alternativas usam as letras originais (A–E) e podem ser texto ou imagem (algumas questões, sobretudo química/física de provas antigas, têm alternativas só com figura, hospedada no Cloudinary). Como a fonte não traz explicação pedagógica, o campo `explanation` só informa o gabarito oficial. Formato inesperado no Mongo retorna `ENEM_API_ERROR`; pedir mais questões do que o pool da disciplina tem disponível retorna `INSUFFICIENT_QUESTIONS`.
 
 ## ChatGPT
 

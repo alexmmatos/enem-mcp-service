@@ -1,4 +1,4 @@
-import { ENEM_DISCIPLINE_TOPICS, LEVELS, TOPICS, type Level, type Topic } from "../../shared/constants/exam.js";
+import { ENEM_DISCIPLINE_TOPICS, LEVELS, TOPICS, type EnemDiscipline, type Level, type Topic } from "../../shared/constants/exam.js";
 import type { PublicQuestion } from "../../shared/types/exam.js";
 import { ExamError } from "../errors/exam-error.js";
 import type { EnemQuestion } from "../repositories/enem.repository.js";
@@ -15,6 +15,9 @@ function asLevel(value: string): Level {
 }
 
 const IMAGE_MARKDOWN_RE = /!\[\]\(([^)]+)\)/g;
+// Remover a imagem do meio do texto deixa as quebras de linha que a cercavam órfãs (3+ `\n`
+// seguidos) — com `white-space: pre-line` na view, cada uma vira uma linha em branco visível.
+const EXCESS_BLANK_LINES_RE = /(?:[ \t]*\n){3,}/g;
 
 // A própria API do ENEM referencia esse placeholder quando a imagem original se perdeu
 // (ex.: ENEM 2023, questões 1 e 44) — resolve como um SVG real de "imagem quebrada", então
@@ -31,7 +34,7 @@ export function extractImages(text: string): { text: string; images: string[] } 
   const cleaned = text.replace(IMAGE_MARKDOWN_RE, (_match, url: string) => {
     if (url !== MISSING_IMAGE_URL) images.push(url);
     return "";
-  }).trim();
+  }).replace(EXCESS_BLANK_LINES_RE, "\n\n").trim();
   return { text: cleaned, images };
 }
 
@@ -49,16 +52,16 @@ export function toPublicQuestion(question: InternalQuestion): PublicQuestion {
 }
 
 function enemTopic(discipline: string): Topic {
-  const topic = ENEM_DISCIPLINE_TOPICS[discipline];
+  const topic = ENEM_DISCIPLINE_TOPICS[discipline as EnemDiscipline];
   if (!topic) throw new ExamError("ENEM_API_ERROR", `Disciplina do ENEM desconhecida: ${discipline}.`);
   return topic;
 }
 
-export function enemQuestionToData(question: EnemQuestion, year: number): QuestionDoc {
+export function enemQuestionToData(question: EnemQuestion): QuestionDoc {
   const context = (question.context ?? "").trim();
   const statement = context ? `${context}\n\n${question.alternativesIntroduction}` : question.alternativesIntroduction;
   return {
-    _id: `enem-${year}-${question.index}`,
+    _id: `enem-${question.year}-${question.index}`,
     topic: enemTopic(question.discipline),
     level: "enem",
     statement,
@@ -69,6 +72,6 @@ export function enemQuestionToData(question: EnemQuestion, year: number): Questi
       ...(file && file !== MISSING_IMAGE_URL ? { image: file } : {}),
     })),
     correctAlternativeId: question.correctAlternative,
-    explanation: `Gabarito oficial ENEM ${year}: alternativa ${question.correctAlternative}.`,
+    explanation: `Gabarito oficial ENEM ${question.year}: alternativa ${question.correctAlternative}.`,
   };
 }

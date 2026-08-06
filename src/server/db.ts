@@ -1,5 +1,14 @@
 import { type Db, MongoClient } from "mongodb";
 
+// Prisma costumava carregar .env sozinho (recurso próprio dele); sem ORM ninguém mais faz isso
+// por padrão. process.loadEnvFile é nativo do Node (>=20.6) — sem depender de dotenv. Ausente em
+// produção/Docker (env vars vêm da plataforma), daí o try/catch.
+try {
+  process.loadEnvFile();
+} catch {
+  // sem .env no diretório atual — normal em produção/Docker, onde as env vars já vêm setadas.
+}
+
 const uri = process.env.MONGODB_URI;
 if (!uri) throw new Error("Defina MONGODB_URI antes de iniciar o servidor.");
 

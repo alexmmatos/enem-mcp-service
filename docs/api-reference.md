@@ -13,16 +13,16 @@ Todas as tools são registradas em [src/server.ts](../src/server.ts), validam en
 
 ## `create_exam`
 
-Busca `numberOfQuestions` questões oficiais do ENEM do ano `year` (a partir do início da prova, offset 0) já semeadas no MongoDB, grava uma cópia normalizada e persiste a ordem oficial abrindo a view `exam-app`. Ver [architecture.md](./architecture.md#origem-das-questões-enem).
+Sorteia `numberOfQuestions` questões oficiais do ENEM da `disciplina` pedida, dentre todos os anos já semeados no MongoDB (`$sample`, sem repetir questão), grava uma cópia normalizada e abre a view `exam-app`. Ver [architecture.md](./architecture.md#origem-das-questões-enem).
 
 | Campo | Tipo | Regras |
 | --- | --- | --- |
-| `year` | int | 1998–ano atual |
-| `numberOfQuestions` | int | 1–50; é o `limit` da consulta ao ENEM |
+| `disciplina` | enum | `Linguagens` \| `Ciências Humanas` \| `Ciências da Natureza` \| `Matemática` \| `todas`; padrão `todas` |
+| `numberOfQuestions` | int | 1–50 |
 | `userId?` | string | 1–128 chars |
 | `sessionId?` | string | 1–128 chars; se omitido, o servidor gera um `randomUUID()` |
 
-Erros: `INSUFFICIENT_QUESTIONS` (a prova daquele ano tem menos questões do que o `numberOfQuestions` pedido, com `available`/`requested` em `details`), `ENEM_API_ERROR` (ano sem dados no MongoDB ou documento fora do formato esperado, com `year` em `details`).
+Erros: `INSUFFICIENT_QUESTIONS` (menos questões disponíveis para essa `disciplina` do que o `numberOfQuestions` pedido, com `available`/`requested` em `details`), `ENEM_API_ERROR` (nenhuma prova semeada no MongoDB, ou documento fora do formato esperado).
 
 ## `get_current_question`
 

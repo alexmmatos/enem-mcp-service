@@ -144,21 +144,15 @@ export function ExamApp() {
 
   const next = () => { setFeedback(undefined); setSelected(null); setAnsweredView(null); };
 
-  const explain = () => {
-    if (!snapshot?.question) return;
-    const options = snapshot.question.alternatives.map((alt) => `${alt.id.toUpperCase()}) ${alt.text ?? "[imagem]"}`).join("\n");
-    void sendFollowUp(`Explique a questão a seguir da prova ENEM, sem revelar a alternativa correta:\n\n${snapshot.question.statement}\n\n${options}`);
-  };
-
   if (isInitialPending || !snapshot) return <div className={`${styles.shell} ${theme === "dark" ? styles.dark : ""}`}><div className={styles.loading}>Restaurando sua prova…</div></div>;
-  if (report) return <div className={`${styles.shell} ${theme === "dark" ? styles.dark : ""}`} data-llm={`Prova finalizada com ${report.percentage}% de aproveitamento.`}><ExamResult report={report} onRestart={() => sendFollowUp("Quero iniciar outra prova do ENEM. Pergunte o ano e a quantidade de questões.")} /></div>;
+  if (report) return <div className={`${styles.shell} ${theme === "dark" ? styles.dark : ""}`} data-llm={`Prova finalizada com ${report.percentage}% de aproveitamento.`}><ExamResult report={report} onRestart={() => sendFollowUp("Quero iniciar outra prova do ENEM. Pergunte a disciplina (ou todas) e a quantidade de questões.")} /></div>;
 
-  return <div className={`${styles.shell} ${theme === "dark" ? styles.dark : ""}`} data-llm={`Prova ENEM ${snapshot.exam.year ?? ""}, ${snapshot.progress.answered} de ${snapshot.progress.total} respondidas.`}>
+  return <div className={`${styles.shell} ${theme === "dark" ? styles.dark : ""}`} data-llm={`Prova ENEM — ${snapshot.exam.disciplina}, ${snapshot.progress.answered} de ${snapshot.progress.total} respondidas.`}>
     <ExamHeader displayMode={displayMode} onSetDisplayMode={setDisplayMode} />
     {message ? <p className={styles.error} role="alert">{message}</p> : null}
     <div className={styles.layout}>
       <aside className={styles.panel}>
-        <div><div className={styles.label}>Prova</div><p className={styles.value}>ENEM {snapshot.exam.year}</p></div>
+        <div><div className={styles.label}>Prova</div><p className={styles.value}>ENEM — {snapshot.exam.disciplina}</p></div>
         <div><div className={styles.label}>Disciplina</div><p className={styles.value}>{snapshot.question?.topic ?? "—"}</p></div>
         <div><div className={styles.label}>Pontuação</div><p className={styles.value}>{snapshot.progress.correct} acerto(s)</p></div>
         <div><div className={styles.label}>Status</div><span className={styles.status}>{snapshot.exam.status === "paused" ? "Pausada" : "Em andamento"}</span></div>
@@ -173,7 +167,7 @@ export function ExamApp() {
       {(() => {
         const view = feedback && answeredView ? answeredView : { question: snapshot.question, current: snapshot.progress.current, total: snapshot.progress.total };
         return view.question
-          ? <QuestionCard question={view.question} current={view.current} total={view.total} selected={selected} busy={busy || snapshot.exam.status === "paused"} feedback={feedback} onSelect={setSelected} onSubmit={submit} onNext={next} onExplain={explain} />
+          ? <QuestionCard question={view.question} current={view.current} total={view.total} selected={selected} busy={busy || snapshot.exam.status === "paused"} feedback={feedback} onSelect={setSelected} onSubmit={submit} onNext={next} />
           : <main className={styles.questionCard}><p>Calculando o resultado…</p></main>;
       })()}
     </div>

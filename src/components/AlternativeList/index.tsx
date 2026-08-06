@@ -1,6 +1,7 @@
 import { assetUrl } from "../../helpers.js";
 import type { Alternative } from "../../shared/types/exam.js";
 import styles from "../ExamApp/ExamApp.module.css";
+import { FormattedText } from "../FormattedText/index.js";
 
 interface Props { alternatives: Alternative[]; selected: string | null; disabled: boolean; onSelect: (id: string) => void }
 
@@ -16,7 +17,7 @@ export function AlternativeList({ alternatives, selected, disabled, onSelect }: 
       <span className={styles.letter}>{alternative.id}</span>
       {alternative.image
         ? <img src={assetUrl(alternative.image)} alt={`Alternativa ${alternative.id}`} className={styles.alternativeImage} />
-        : <span>{alternative.text}</span>}
+        : <span>{alternative.text ? <FormattedText text={alternative.text} /> : null}</span>}
     </button>)}
   </fieldset>;
 }
