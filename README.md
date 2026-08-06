@@ -6,7 +6,7 @@ Aplicação MCP independente para criar e realizar provas do ENEM (questões ofi
 
 - Skybridge 1.3, TypeScript strict, React 19 e CSS Modules.
 - Zod valida todas as entradas MCP.
-- Prisma ORM com SQLite no desenvolvimento e schema/migrations PostgreSQL separados para produção.
+- Prisma ORM com SQLite, em desenvolvimento e produção.
 - Vitest cobre domínio, concorrência, segurança e fluxo completo.
 - `src/server` concentra tools, serviços, repositórios, schemas e erros.
 - `src/shared` contém DTOs públicos e constantes compartilhadas.
@@ -95,27 +95,12 @@ docker volume create tech-exam-data
 docker run --rm -p 3000:3000 -v tech-exam-data:/app/prisma tech-exam-mcp
 ```
 
-A imagem aplica a migration no build. O volume preserva tentativas e o cache de questões do ENEM entre reinícios. Para dados de produção e réplicas múltiplas, prefira PostgreSQL.
-
-## PostgreSQL em produção
-
-O schema e a migration ficam em `prisma/postgresql`. Para validar localmente:
-
-```bash
-docker compose up -d postgres
-export DATABASE_URL='postgresql://tech_exam:tech_exam@localhost:5432/tech_exam?schema=public'
-npx prisma generate --schema prisma/postgresql/schema.prisma
-npx prisma migrate deploy --schema prisma/postgresql/schema.prisma
-npm run build
-npm start
-```
-
-O provider Prisma é definido no schema, por isso a troca correta envolve gerar o client com `prisma/postgresql/schema.prisma`; mudar somente `DATABASE_URL` não basta. Em CI/CD, execute generate e migrate deploy antes de iniciar o servidor.
+A imagem aplica a migration no build. O volume preserva tentativas e o cache de questões do ENEM entre reinícios.
 
 ## Persistência, usuários e limitações
 
 - `ExamAttempt.userId` é opcional; nunca usa e-mail como chave. Sem identificador, o servidor cria `sessionId` aleatório.
-- SQLite é adequado a desenvolvimento e uma única instância. PostgreSQL é recomendado para concorrência entre processos/réplicas.
+- SQLite é a única base suportada. Adequado a uma única instância; múltiplas réplicas concorrentes escrevendo no mesmo arquivo não são suportadas.
 - A view se adapta ao tema, telas estreitas e fullscreen solicitado pelo usuário. Hosts MCP controlam altura, composer, modais e podem recusar mudanças de modo.
 - O botão “Iniciar outra prova” envia uma mensagem ao assistente, que coleta os novos parâmetros de modo conversacional.
 - A primeira versão não inclui cronômetro nem autenticação OAuth.
@@ -125,8 +110,7 @@ O provider Prisma é definido no schema, por isso a troca correta envolve gerar 
 
 ```text
 prisma/
-  migrations/                 # SQLite
-  postgresql/                  # schema e migration de produção
+  migrations/
 src/
   components/
     AlternativeList/

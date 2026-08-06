@@ -1,0 +1,9 @@
+node_modules/
+dist/
+.env*
+.DS_store
+*.tsbuildinfo
+.skybridge/
+.vercel/
+*.db*
+enem-api/
