@@ -1,34 +1,36 @@
 # Tech Exam MCP
 
-Aplicação MCP independente para criar e realizar provas do ENEM (questões oficiais consultadas em `api.enem.dev`) dentro de clientes com suporte a Apps, como ChatGPT e Claude. A interface React oferece uma experiência visual, mas a fonte de verdade é o servidor: questão atual, ordem, respostas, pontuação e status são persistidos por Prisma.
+Aplicação MCP independente para criar e realizar provas do ENEM dentro de clientes com suporte a Apps, como ChatGPT e Claude. A interface React oferece uma experiência visual, mas a fonte de verdade é o servidor: questões, ordem, respostas, pontuação e status são persistidos no MongoDB.
 
 ## Stack e arquitetura
 
 - Skybridge 1.3, TypeScript strict, React 19 e CSS Modules.
 - Zod valida todas as entradas MCP.
-- Prisma ORM com SQLite, em desenvolvimento e produção.
-- Vitest cobre domínio, concorrência, segurança e fluxo completo.
+- MongoDB (driver oficial `mongodb`, sem ORM) — banco único, dev e produção.
+- Vitest cobre domínio, concorrência, segurança e fluxo completo, contra um MongoDB real (`mongodb-memory-server`, replica set de 1 nó).
 - `src/server` concentra tools, serviços, repositórios, schemas e erros.
 - `src/shared` contém DTOs públicos e constantes compartilhadas.
 - `src/views/exam-app.tsx` é a view Skybridge; `src/components` divide a UI por responsabilidade.
 
-O `examId` é a chave da tentativa. `useViewState` ajuda a view a reencontrá-lo, mas todo carregamento consulta novamente `get_exam_progress` e `get_current_question`. `submit_answer` usa transação serializável, trava por prova no processo e a restrição única `(examId, questionId)` para impedir avanço ou pontuação duplicados.
+O `examId` é a chave da tentativa. `useViewState` ajuda a view a reencontrá-lo, mas todo carregamento consulta novamente `get_exam_progress` e `get_current_question`. `submit_answer` usa uma transação Mongo (sessão de client, requer replica set), trava por prova no processo e a restrição única `(examId, questionId)` para impedir avanço ou pontuação duplicados.
 
 ## Requisitos
 
 - Node.js 24.18 ou superior
 - npm 11 ou superior
+- Um MongoDB (Atlas ou self-hosted, precisa ser replica set — Atlas já é por padrão, inclusive no tier grátis)
 - Docker opcional
 
-## Instalação e SQLite
+## Instalação e dados
 
 ```bash
-cp .env.example .env
+cp .env.example .env   # preencha MONGODB_URI (e MONGODB_DB, se quiser outro nome)
 npm install
-npm run db:prepare
-npm run db:migrate -- --name init
+npm run seed:mongo     # popula enem_questions/enem_disciplines/enem_exams a partir de data/enem/
 npm run dev
 ```
+
+`seed:mongo` só precisa rodar uma vez por banco (ou de novo se `data/enem/` mudar — é idempotente, usa upsert). As imagens das questões apontam pro Cloudinary por padrão; para reenviá-las a uma conta própria, rode `CLOUDINARY_URL=cloudinary://... npm run upload:cloudinary` e ajuste `CLOUDINARY_IMAGE_BASE_URL` antes do seed.
 
 `npm run dev` escolhe uma porta livre a partir da 3000, inicia Skybridge e ngrok em conjunto e imprime a URL HTTPS pública já terminada em `/mcp`. Isso permite executar o Tech Exam mesmo quando outro MCP já está usando a porta 3000. O DevTools usa a porta local exibida e o inspetor do ngrok fica em `http://localhost:4040`. Pressione `Ctrl+C` para encerrar os dois processos. Para solicitar outra porta inicial, use `DEV_PORT=3100 npm run dev`.
 
@@ -38,7 +40,7 @@ O comando exige o ngrok instalado e autenticado (`ngrok config add-authtoken ...
 npm run dev:local
 ```
 
-`npm run dev:alpic` mantém o túnel nativo do Skybridge como alternativa. `db:prepare` cria o arquivo vazio que algumas versões do engine Prisma exigem antes da primeira migration.
+`npm run dev:alpic` mantém o túnel nativo do Skybridge como alternativa.
 
 Comandos de qualidade e produção:
 
@@ -66,7 +68,7 @@ Todas retornam uma estrutura consistente com `exam`, `progress`, `question?` e `
 
 ## Provas do ENEM
 
-`create_exam` aceita `year` (ano da prova) e `numberOfQuestions` (o `limit` da consulta a `api.enem.dev`). O servidor busca as questões oficiais a partir do início da prova daquele ano, grava uma cópia local (`Question.id` no formato `enem-{year}-{index}`) e monta a tentativa preservando a ordem oficial, sem embaralhar. As alternativas usam as letras originais (A–E) e podem ser texto ou imagem (algumas questões, sobretudo química/física de provas antigas, têm alternativas só com figura). Imagens do enunciado e das alternativas são exibidas na view. Como a API não fornece explicação pedagógica, o campo `explanation` só informa o gabarito oficial. Falha de rede ou resposta em formato inesperado da API retornam `ENEM_API_ERROR`; pedir mais questões do que a prova daquele ano tem retorna `INSUFFICIENT_QUESTIONS`.
+`create_exam` aceita `year` (ano da prova) e `numberOfQuestions` (quantas questões, a partir do início da prova). O servidor busca as questões já semeadas no MongoDB (`enem_questions`/`enem_exams` — ver "Instalação e dados"), grava uma cópia normalizada em `questions` (`_id` no formato `enem-{year}-{index}`) e monta a tentativa preservando a ordem oficial, sem embaralhar. As alternativas usam as letras originais (A–E) e podem ser texto ou imagem (algumas questões, sobretudo química/física de provas antigas, têm alternativas só com figura, hospedada no Cloudinary). Como a fonte não traz explicação pedagógica, o campo `explanation` só informa o gabarito oficial. Ano sem dados no Mongo ou formato inesperado retornam `ENEM_API_ERROR`; pedir mais questões do que a prova daquele ano tem retorna `INSUFFICIENT_QUESTIONS`.
 
 ## ChatGPT
 
@@ -87,30 +89,31 @@ claude mcp add --transport http tech-exam http://localhost:3000/mcp
 
 Para um cliente remoto, substitua o endereço local pela URL HTTPS. A disponibilidade de views MCP depende da versão/capacidade do host; quando a view não for suportada, as tools ainda devolvem conteúdo estruturado e textual.
 
-## Docker com SQLite
+## Docker
 
 ```bash
 docker build -t tech-exam-mcp .
-docker volume create tech-exam-data
-docker run --rm -p 3000:3000 -v tech-exam-data:/app/prisma tech-exam-mcp
+docker run --rm -p 3000:3000 -e MONGODB_URI="mongodb+srv://..." -e MONGODB_DB="questions" tech-exam-mcp
 ```
 
-A imagem aplica a migration no build. O volume preserva tentativas e o cache de questões do ENEM entre reinícios.
+Sem volume — o estado vive inteiramente no MongoDB apontado por `MONGODB_URI`, externo ao container.
 
 ## Persistência, usuários e limitações
 
 - `ExamAttempt.userId` é opcional; nunca usa e-mail como chave. Sem identificador, o servidor cria `sessionId` aleatório.
-- SQLite é a única base suportada. Adequado a uma única instância; múltiplas réplicas concorrentes escrevendo no mesmo arquivo não são suportadas.
+- MongoDB é a única base suportada; precisa ser um replica set (Atlas já é, mesmo no tier grátis) porque `submit_answer` usa transação de sessão.
 - A view se adapta ao tema, telas estreitas e fullscreen solicitado pelo usuário. Hosts MCP controlam altura, composer, modais e podem recusar mudanças de modo.
 - O botão “Iniciar outra prova” envia uma mensagem ao assistente, que coleta os novos parâmetros de modo conversacional.
-- A primeira versão não inclui cronômetro nem autenticação OAuth.
-- `create_exam` depende de `api.enem.dev` estar disponível; questões já buscadas ficam cacheadas em `Question` e continuam acessíveis mesmo se a API cair depois.
+- A primeira versão não inclui autenticação OAuth.
+- `create_exam` lê de `enem_questions`/`enem_exams`, já semeados no Mongo — nenhuma chamada de rede pra terceiros na hora de criar a prova.
 
 ## Estrutura principal
 
 ```text
-prisma/
-  migrations/
+data/enem/                  cópia própria dos JSONs de prova/questão do ENEM, fonte do seed:mongo
+scripts/
+  seed-mongo.ts              popula enem_questions/enem_disciplines/enem_exams a partir de data/enem/
+  upload-cloudinary.ts       envia as imagens de public/ pro Cloudinary (pasta enem-files)
 src/
   components/
     AlternativeList/
@@ -121,6 +124,7 @@ src/
     ExamResult/
     QuestionCard/
   server/
+    db.ts                    MongoClient/Db singleton
     errors/
     repositories/
     schemas/

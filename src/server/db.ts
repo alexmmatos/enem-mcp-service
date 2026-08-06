@@ -12,8 +12,7 @@ if (process.env.NODE_ENV !== "production") globalForMongo.mongoClient = mongoCli
 
 export const db: Db = mongoClient.db(process.env.MONGODB_DB ?? "questions");
 
-// Mesma trava que a constraint única `(examId, questionId)` do Prisma garantia: impede duas
-// respostas para a mesma questão na mesma tentativa. `createIndex` é idempotente — chamar nos
+// Impede duas respostas para a mesma questão na mesma tentativa. `createIndex` é idempotente — chamar nos
 // próximos starts não recria nada. Chamado explicitamente no boot do servidor (src/server.ts),
 // não aqui no import do módulo, pra este arquivo continuar seguro de importar em testes que usam
 // seu próprio banco (mongodb-memory-server).

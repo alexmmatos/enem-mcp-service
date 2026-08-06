@@ -13,7 +13,7 @@ Todas as tools são registradas em [src/server.ts](../src/server.ts), validam en
 
 ## `create_exam`
 
-Busca `numberOfQuestions` questões oficiais do ENEM do ano `year` em `api.enem.dev` (a partir do início da prova, offset 0), cacheia localmente, persiste a ordem oficial e abre a view `exam-app`. Ver [architecture.md](./architecture.md#origem-das-questões-enem).
+Busca `numberOfQuestions` questões oficiais do ENEM do ano `year` (a partir do início da prova, offset 0) já semeadas no MongoDB, grava uma cópia normalizada e persiste a ordem oficial abrindo a view `exam-app`. Ver [architecture.md](./architecture.md#origem-das-questões-enem).
 
 | Campo | Tipo | Regras |
 | --- | --- | --- |
@@ -22,7 +22,7 @@ Busca `numberOfQuestions` questões oficiais do ENEM do ano `year` em `api.enem.
 | `userId?` | string | 1–128 chars |
 | `sessionId?` | string | 1–128 chars; se omitido, o servidor gera um `randomUUID()` |
 
-Erros: `INSUFFICIENT_QUESTIONS` (a prova daquele ano tem menos questões do que o `numberOfQuestions` pedido, com `available`/`requested` em `details`), `ENEM_API_ERROR` (falha de rede, resposta não-2xx ou formato inesperado de `api.enem.dev`, com `year` em `details`).
+Erros: `INSUFFICIENT_QUESTIONS` (a prova daquele ano tem menos questões do que o `numberOfQuestions` pedido, com `available`/`requested` em `details`), `ENEM_API_ERROR` (ano sem dados no MongoDB ou documento fora do formato esperado, com `year` em `details`).
 
 ## `get_current_question`
 
@@ -36,7 +36,7 @@ Erros: `EXAM_NOT_FOUND`.
 
 ## `submit_answer`
 
-Valida, persiste a resposta e avança a tentativa. Transação Prisma `Serializable` + lock em memória por `examId` (ver [architecture.md](./architecture.md#concorrência-e-idempotência)).
+Valida, persiste a resposta e avança a tentativa. Transação Mongo (sessão + replica set) + lock em memória por `examId` (ver [architecture.md](./architecture.md#concorrência-e-idempotência)).
 
 | Campo | Tipo |
 | --- | --- |
@@ -97,7 +97,7 @@ Erros: `EXAM_NOT_FOUND`.
 
 | Código | Quando ocorre |
 | --- | --- |
-| `ENEM_API_ERROR` | falha de rede, status não-2xx ou formato inesperado ao consultar `api.enem.dev` |
+| `ENEM_API_ERROR` | ano sem dados em `enem_exams`/`enem_questions` no MongoDB, ou documento fora do formato esperado |
 | `EXAM_NOT_FOUND` | `examId` não existe |
 | `EXAM_PAUSED` | `submit_answer` chamado com a prova pausada |
 | `EXAM_FINISHED` | `pause_exam`/`resume_exam`/`submit_answer` chamados após a prova finalizar |
@@ -106,6 +106,6 @@ Erros: `EXAM_NOT_FOUND`.
 | `ANSWER_ALREADY_SUBMITTED` | já existe resposta para `(examId, questionId)` com outra alternativa |
 | `INSUFFICIENT_QUESTIONS` | a prova do ENEM daquele ano tem menos que `numberOfQuestions` questões |
 | `QUESTION_NOT_FOUND` | referência a uma questão inexistente (dado corrompido) |
-| `INVALID_EXAM_DATA` | `questionIdsJson`, `status`, `topic` ou `level` da tentativa não passam na validação de forma (dado corrompido) |
-| `INVALID_QUESTION_DATA` | `alternativesJson`, `topic` ou `level` da questão não passam na validação de forma (dado corrompido) |
+| `INVALID_EXAM_DATA` | `questionIds`, `status`, `topic` ou `level` da tentativa não passam na validação de forma (dado corrompido) |
+| `INVALID_QUESTION_DATA` | `topic` ou `level` da questão não passam na validação de forma (dado corrompido) |
 | `INTERNAL_ERROR` | qualquer exceção não mapeada (fallback de `normalizeError`) |

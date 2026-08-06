@@ -21,7 +21,7 @@ const server = new McpServer(
   .registerTool(
     {
       name: "create_exam",
-      description: "Cria uma prova persistente com questões oficiais do ENEM (api.enem.dev) e abre a interface interativa.",
+      description: "Cria uma prova persistente com questões oficiais do ENEM e abre a interface interativa.",
       inputSchema: createExamInput,
       annotations: { title: "Criar prova", readOnlyHint: false, destructiveHint: false, openWorldHint: false },
       _meta: standardMeta("Preparando a prova…", "Prova pronta."),

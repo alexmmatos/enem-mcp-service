@@ -3,5 +3,5 @@
   "compilerOptions": {
     "rootDir": "."
   },
-  "include": ["src", "prisma", "scripts", "tests", "vite.config.ts", ".skybridge/**/*.d.ts"]
+  "include": ["src", "scripts", "tests", "vite.config.ts", ".skybridge/**/*.d.ts"]
 }

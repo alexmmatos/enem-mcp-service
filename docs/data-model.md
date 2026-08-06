@@ -1,55 +1,54 @@
 # Modelo de dados
 
-Schema em [prisma/schema.prisma](../prisma/schema.prisma) — SQLite, único banco suportado (dev e produção).
+MongoDB, sem ORM. Tipos dos documentos em [question.repository.ts](../src/server/repositories/question.repository.ts) e [exam.service.ts](../src/server/services/exam.service.ts) (`QuestionDoc`, `ExamAttemptDoc`, `ExamAnswerDoc`); dados de origem do ENEM em [enem.repository.ts](../src/server/repositories/enem.repository.ts).
 
-## `Question`
+## `enem_questions`, `enem_disciplines`, `enem_exams`
 
-Cache local das questões do ENEM já buscadas em `api.enem.dev`. `create_exam` grava (upsert) as linhas necessárias antes de criar a tentativa; ver [architecture.md](./architecture.md#origem-das-questões-enem).
+Dados de referência do ENEM, semeados por [scripts/seed-mongo.ts](../scripts/seed-mongo.ts) a partir de `data/enem/` — não tocados pelo app em escrita, só lidos por `enem.repository.ts` na hora de montar uma prova. `enem_questions._id` é `enem-{year}-{index}[-{language}]` (variantes de idioma pra questões 1–5); `enem_exams._id` é o ano (`number`), com `languages` usado pra resolver a variante padrão.
 
-| Campo | Tipo | Observação |
-| --- | --- | --- |
-| `id` | String (PK) | formato `enem-{year}-{index}`, ex.: `enem-2022-1` |
-| `topic` | String | a disciplina do ENEM — um de `TOPICS` (`Linguagens`, `Ciências Humanas`, `Ciências da Natureza`, `Matemática`) |
-| `level` | String | sempre `"enem"` — único valor em `LEVELS` |
-| `statement` | String | `context` (com markdown de imagem intacto, `![](url)`) + `alternativesIntroduction` da API — a extração das imagens acontece na leitura (`toPublicQuestion`), não na gravação |
-| `code?` | String | nunca preenchido para questões do ENEM |
-| `alternativesJson` | String | JSON de `Alternative[]` (`{ id, text? }` ou `{ id, image? }`), `id` é a letra original (`A`–`E`); algumas alternativas (raras) são só imagem, sem `text`; desserializado só no repositório |
-| `correctAlternativeId` | String | nunca sai para o cliente antes da resposta |
-| `explanation` | String | sintética — `"Gabarito oficial ENEM {year}: alternativa {letra}."`, já que a API não fornece explicação pedagógica |
+## `questions`
 
-Índice em `(topic, level)`.
-
-## `ExamAttempt`
-
-Uma linha por tentativa de prova.
+Cache normalizado das questões do ENEM já usadas em alguma prova. `create_exam` grava (upsert) as linhas necessárias a partir de `enem_questions` antes de criar a tentativa; ver [architecture.md](./architecture.md#origem-das-questões-enem).
 
 | Campo | Tipo | Observação |
 | --- | --- | --- |
-| `id` | String (PK, cuid) | é o `examId` usado por todas as tools |
-| `userId?` | String | opcional; **nunca** é e-mail — ver [SPEC.md](../SPEC.md) |
-| `sessionId` | String | gerado com `randomUUID()` se não informado |
-| `status` | String | `in_progress` \| `paused` \| `finished` |
-| `topic` | String | sempre `"ENEM"` |
-| `level` | String | sempre `"enem"` |
-| `enemYear` | Int | ano da prova, exposto como `ExamSummary.year` |
-| `questionIdsJson` | String | JSON da ordem oficial de `Question.id[]`, sem embaralhar |
-| `currentQuestionIndex` | Int | posição atual em `questionIdsJson`; só avança em `submit_answer` |
-| `score` | Int | contagem de acertos |
-| `startedAt`, `updatedAt`, `finishedAt?` | DateTime | |
+| `_id` | string | formato `enem-{year}-{index}`, ex.: `enem-2022-1` |
+| `topic` | string | a disciplina do ENEM — um de `TOPICS` (`Linguagens`, `Ciências Humanas`, `Ciências da Natureza`, `Matemática`) |
+| `level` | string | sempre `"enem"` — único valor em `LEVELS` |
+| `statement` | string | `context` (com markdown de imagem intacto, `![](url)`) + `alternativesIntroduction` da fonte — a extração das imagens acontece na leitura (`toPublicQuestion`), não na gravação |
+| `code` | string \| null | nunca preenchido para questões do ENEM |
+| `alternatives` | `Alternative[]` | array real (não serializado) de `{ id, text? }` ou `{ id, image? }`; `id` é a letra original (`A`–`E`); algumas alternativas (raras) são só imagem, sem `text` |
+| `correctAlternativeId` | string | nunca sai para o cliente antes da resposta |
+| `explanation` | string | sintética — `"Gabarito oficial ENEM {year}: alternativa {letra}."`, já que a fonte não traz explicação pedagógica |
 
-Índices em `userId`, `sessionId` e `status`.
+## `exam_attempts`
 
-## `ExamAnswer`
-
-Uma linha por resposta persistida.
+Um documento por tentativa de prova.
 
 | Campo | Tipo | Observação |
 | --- | --- | --- |
-| `id` | String (PK, cuid) | |
-| `examId` | String (FK → `ExamAttempt`, `onDelete: Cascade`) | |
-| `questionId` | String (FK → `Question`) | |
-| `selectedAlternativeId` | String | |
-| `correct` | Boolean | calculado no momento da escrita |
-| `answeredAt` | DateTime | |
+| `_id` | string (`randomUUID()`) | é o `examId` usado por todas as tools |
+| `userId?` | string | opcional; **nunca** é e-mail — ver [SPEC.md](../SPEC.md) |
+| `sessionId` | string | gerado com `randomUUID()` se não informado |
+| `status` | string | `in_progress` \| `paused` \| `finished` |
+| `topic` | string | sempre `"ENEM"` |
+| `level` | string | sempre `"enem"` |
+| `enemYear?` | number | ano da prova, exposto como `ExamSummary.year` |
+| `questionIds` | `string[]` | array real da ordem oficial de `questions._id`, sem embaralhar |
+| `currentQuestionIndex` | number | posição atual em `questionIds`; só avança em `submit_answer` |
+| `score` | number | contagem de acertos |
+| `startedAt`, `updatedAt`, `finishedAt?` | Date | |
 
-`@@unique([examId, questionId])` é a trava que impede duas respostas para a mesma questão na mesma tentativa — é ela que faz `submit_answer` ser idempotente/seguro sob concorrência (ver [architecture.md](./architecture.md#concorrência-e-idempotência)).
+## `exam_answers`
+
+Um documento por resposta persistida.
+
+| Campo | Tipo | Observação |
+| --- | --- | --- |
+| `examId` | string | |
+| `questionId` | string | |
+| `selectedAlternativeId` | string | |
+| `correct` | boolean | calculado no momento da escrita |
+| `answeredAt` | Date | |
+
+Índice único `{ examId: 1, questionId: 1 }` (criado por `ensureIndexes` em [db.ts](../src/server/db.ts)) — é a trava que impede duas respostas para a mesma questão na mesma tentativa, e que faz `submit_answer` ser idempotente/seguro sob concorrência (ver [architecture.md](./architecture.md#concorrência-e-idempotência)).

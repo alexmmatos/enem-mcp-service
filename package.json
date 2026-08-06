@@ -10,7 +10,6 @@
     "dev:tunnel": "tsx scripts/dev-with-ngrok.ts",
     "dev:alpic": "skybridge dev --tunnel",
     "build": "skybridge build",
-    "vercel-build": "skybridge build && tsx scripts/vercel-postbuild.ts",
     "start": "skybridge start",
     "deploy": "alpic deploy",
     "lint": "eslint .",
