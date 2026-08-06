@@ -1,4 +1,5 @@
 import { McpServer } from "skybridge/server";
+import { ensureIndexes } from "./server/db.js";
 import { createExamInput, examIdInput, submitAnswerInput } from "./server/schemas/exam.schemas.js";
 import { createExam } from "./server/tools/create-exam.js";
 import { finishExam } from "./server/tools/finish-exam.js";
@@ -91,6 +92,8 @@ const server = new McpServer(
     },
     finishExam,
   );
+
+await ensureIndexes();
 
 export default await server.run();
 export type AppType = typeof server;

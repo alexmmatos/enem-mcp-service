@@ -7,3 +7,5 @@ dist/
 .vercel/
 *.db*
 enem-api/
+scripts/
+data/

@@ -4,5 +4,4 @@ dist
 .env*
 prisma/*.db*
 coverage
-enem-api/*
-!enem-api/public
+enem-api

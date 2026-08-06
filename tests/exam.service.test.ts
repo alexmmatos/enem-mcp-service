@@ -1,26 +1,22 @@
-import { PrismaClient } from "@prisma/client";
-import { readFile } from "node:fs/promises";
-import { afterAll, afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { ExamService } from "../src/server/services/exam.service.js";
+import { type Db, MongoClient } from "mongodb";
+import { MongoMemoryReplSet } from "mongodb-memory-server";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { ensureIndexes } from "../src/server/db.js";
+import { ATTEMPTS_COLLECTION, ExamService, type ExamAttemptDoc } from "../src/server/services/exam.service.js";
 import { ResultService } from "../src/server/services/result.service.js";
-
-vi.mock("node:fs/promises", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:fs/promises")>();
-  return { ...actual, readFile: vi.fn() };
-});
-
-const readFileMock = vi.mocked(readFile);
-
-const db = new PrismaClient();
-const service = new ExamService(db);
-const resultService = new ResultService(db);
+import { QUESTIONS_COLLECTION, type QuestionDoc } from "../src/server/repositories/question.repository.js";
 
 const YEAR = 2022;
-let available = 50;
 
-function enemQuestion(index: number) {
+interface EnemExamDoc { _id: number; languages: Array<{ value: string }> }
+interface EnemQuestionDoc extends Record<string, unknown> { _id: string; year: number; index: number; language: string | null }
+
+function enemQuestionDoc(index: number) {
   return {
+    _id: `enem-${YEAR}-${index}`,
+    year: YEAR,
     index,
+    language: null,
     discipline: "matematica",
     context: `![](https://enem.dev/img.jpg)\n\nContexto da questão ${index}.`,
     correctAlternative: "B",
@@ -33,34 +29,44 @@ function enemQuestion(index: number) {
   };
 }
 
-function examDetails(count: number) {
-  return { languages: [], questions: Array.from({ length: count }, (_, i) => ({ index: i + 1, language: null })) };
-}
+let replSet: MongoMemoryReplSet;
+let client: MongoClient;
+let db: Db;
+let service: ExamService;
+let resultService: ResultService;
 
-beforeEach(async () => {
-  await db.examAnswer.deleteMany();
-  await db.examAttempt.deleteMany();
-  available = 50;
-  readFileMock.mockImplementation((filePath) => {
-    const path = filePath as string;
-    const questionMatch = /questions[/\\](\d+)[/\\]details\.json$/.exec(path);
-    if (questionMatch) {
-      const index = Number(questionMatch[1]);
-      if (index > available) return Promise.reject(new Error("ENOENT"));
-      return Promise.resolve(JSON.stringify(enemQuestion(index)));
-    }
-    if (path.endsWith("details.json")) return Promise.resolve(JSON.stringify(examDetails(available)));
-    return Promise.reject(new Error("ENOENT"));
-  });
+beforeAll(async () => {
+  replSet = await MongoMemoryReplSet.create({ replSet: { count: 1 } });
+  client = new MongoClient(replSet.getUri());
+  await client.connect();
+  db = client.db("test");
+  await ensureIndexes(db);
+  service = new ExamService(db, client);
+  resultService = new ResultService(db, client);
+}, 120_000);
+
+afterAll(async () => {
+  await client.close();
+  await replSet.stop();
 });
 
-afterEach(() => vi.restoreAllMocks());
-afterAll(async () => db.$disconnect());
+beforeEach(async () => {
+  await Promise.all([
+    db.collection("exam_attempts").deleteMany({}),
+    db.collection("exam_answers").deleteMany({}),
+    db.collection("questions").deleteMany({}),
+    db.collection("enem_questions").deleteMany({}),
+    db.collection("enem_exams").deleteMany({}),
+  ]);
+  await db.collection<EnemExamDoc>("enem_exams").insertOne({ _id: YEAR, languages: [] });
+  await db.collection<EnemQuestionDoc>("enem_questions").insertMany(
+    Array.from({ length: 50 }, (_, i) => enemQuestionDoc(i + 1)),
+  );
+});
 
-function mockSingleQuestion(question: Record<string, unknown>) {
-  readFileMock.mockReset();
-  readFileMock.mockImplementationOnce(() => Promise.resolve(JSON.stringify({ languages: [], questions: [{ index: 1, language: null }] })));
-  readFileMock.mockImplementationOnce(() => Promise.resolve(JSON.stringify(question)));
+async function seedSingleQuestion(question: Record<string, unknown>) {
+  await db.collection("enem_questions").deleteMany({});
+  await db.collection<EnemQuestionDoc>("enem_questions").insertOne({ _id: `enem-${YEAR}-1`, year: YEAR, language: null, ...question } as EnemQuestionDoc);
 }
 
 async function create(count = 3) {
@@ -68,17 +74,19 @@ async function create(count = 3) {
 }
 
 async function internal(questionId: string) {
-  return db.question.findUniqueOrThrow({ where: { id: questionId } });
+  const row = await db.collection<QuestionDoc>(QUESTIONS_COLLECTION).findOne({ _id: questionId });
+  if (!row) throw new Error(`questão ${questionId} não encontrada`);
+  return { ...row, id: row._id };
 }
 
 describe("ExamService", () => {
   it("cria uma prova a partir do ENEM, com sessão anônima e cache local", async () => {
     const response = await create(5);
-    const attempt = await db.examAttempt.findUniqueOrThrow({ where: { id: response.exam.id } });
-    const ids = JSON.parse(attempt.questionIdsJson) as string[];
+    const attempt = await db.collection<ExamAttemptDoc>(ATTEMPTS_COLLECTION).findOne({ _id: response.exam.id });
+    const ids = attempt!.questionIds;
     expect(response.exam).toMatchObject({ status: "in_progress", topic: "ENEM", level: "enem", year: YEAR });
     expect(response.progress).toMatchObject({ current: 1, total: 5, answered: 0, correct: 0 });
-    expect(attempt.sessionId).toBeTruthy();
+    expect(attempt!.sessionId).toBeTruthy();
     expect(ids).toEqual(["enem-2022-1", "enem-2022-2", "enem-2022-3", "enem-2022-4", "enem-2022-5"]);
 
     const cached = await internal(ids[0]!);
@@ -86,7 +94,7 @@ describe("ExamService", () => {
   });
 
   it("extrai imagens do contexto e de alternativas image-only", async () => {
-    mockSingleQuestion({
+    await seedSingleQuestion({
       index: 1,
       discipline: "matematica",
       context: "![](https://enem.dev/2022/questions/1/img1.jpg)\n\nTexto do contexto.",
@@ -102,22 +110,22 @@ describe("ExamService", () => {
 
     expect(response.question?.statement).not.toContain("![");
     expect(response.question?.statement).toContain("Texto do contexto.");
-    expect(response.question?.images).toEqual(["/assets/img1.jpg"]);
+    expect(response.question?.images).toEqual(["https://enem.dev/2022/questions/1/img1.jpg"]);
     expect(response.question?.alternatives).toEqual([
-      { id: "A", image: "/assets/alt-a.jpg" },
-      { id: "B", image: "/assets/alt-b.jpg" },
+      { id: "A", image: "https://enem.dev/2022/questions/1/alt-a.jpg" },
+      { id: "B", image: "https://enem.dev/2022/questions/1/alt-b.jpg" },
     ]);
   });
 
   it("filtra o placeholder de imagem quebrada do ENEM (context e alternativa)", async () => {
-    mockSingleQuestion({
+    await seedSingleQuestion({
       index: 1,
       discipline: "matematica",
-      context: "![](https://enem.dev/broken-image.svg)",
+      context: "![](https://res.cloudinary.com/gisdr0od/image/upload/v1786040662/enem-files/broken-image.svg)",
       correctAlternative: "A",
       alternativesIntroduction: "Pergunta sem imagem real.",
       alternatives: [
-        { letter: "A", text: null, file: "https://enem.dev/broken-image.svg", isCorrect: true },
+        { letter: "A", text: null, file: "https://res.cloudinary.com/gisdr0od/image/upload/v1786040662/enem-files/broken-image.svg", isCorrect: true },
         { letter: "B", text: "Certa por eliminação", file: null, isCorrect: false },
       ],
     });
@@ -133,7 +141,7 @@ describe("ExamService", () => {
   });
 
   it("recusa quantidade indisponível com erro estruturável", async () => {
-    available = 1;
+    await db.collection("enem_questions").deleteMany({ index: { $gt: 1 } });
     await expect(create(5)).rejects.toMatchObject({ code: "INSUFFICIENT_QUESTIONS", details: { available: 1, requested: 5 } });
   });
 
@@ -166,7 +174,7 @@ describe("ExamService", () => {
   it("registra resposta incorreta sem pontuar", async () => {
     const created = await create();
     const question = await internal(created.question!.id);
-    const wrong = (JSON.parse(question.alternativesJson) as Array<{ id: string }>).find(({ id }) => id !== question.correctAlternativeId)!;
+    const wrong = question.alternatives.find(({ id }) => id !== question.correctAlternativeId)!;
     const response = await service.submitAnswer({ examId: created.exam.id, questionId: question.id, alternativeId: wrong.id });
     expect(response.result?.correct).toBe(false);
     expect(response.progress).toMatchObject({ answered: 1, correct: 0, percentage: 0 });
@@ -191,8 +199,8 @@ describe("ExamService", () => {
     const first = await service.submitAnswer(input);
     const duplicate = await service.submitAnswer(input);
     expect(duplicate.progress).toEqual(first.progress);
-    expect(await db.examAnswer.count({ where: { examId: created.exam.id } })).toBe(1);
-    expect((await db.examAttempt.findUniqueOrThrow({ where: { id: created.exam.id } })).score).toBe(1);
+    expect(await db.collection("exam_answers").countDocuments({ examId: created.exam.id })).toBe(1);
+    expect((await db.collection<ExamAttemptDoc>(ATTEMPTS_COLLECTION).findOne({ _id: created.exam.id }))!.score).toBe(1);
   });
 
   it("serializa chamadas simultâneas sem duplicar pontuação ou avanço", async () => {
@@ -201,14 +209,14 @@ describe("ExamService", () => {
     const input = { examId: created.exam.id, questionId: question.id, alternativeId: question.correctAlternativeId };
     const [first, second] = await Promise.all([service.submitAnswer(input), service.submitAnswer(input)]);
     expect(first.progress).toEqual(second.progress);
-    expect(await db.examAnswer.count({ where: { examId: created.exam.id } })).toBe(1);
-    expect((await db.examAttempt.findUniqueOrThrow({ where: { id: created.exam.id } })).currentQuestionIndex).toBe(1);
+    expect(await db.collection("exam_answers").countDocuments({ examId: created.exam.id })).toBe(1);
+    expect((await db.collection<ExamAttemptDoc>(ATTEMPTS_COLLECTION).findOne({ _id: created.exam.id }))!.currentQuestionIndex).toBe(1);
   });
 
   it("rejeita uma questão diferente da atual", async () => {
     const created = await create(2);
-    const attempt = await db.examAttempt.findUniqueOrThrow({ where: { id: created.exam.id } });
-    const ids = JSON.parse(attempt.questionIdsJson) as string[];
+    const attempt = await db.collection<ExamAttemptDoc>(ATTEMPTS_COLLECTION).findOne({ _id: created.exam.id });
+    const ids = attempt!.questionIds;
     await expect(service.submitAnswer({ examId: created.exam.id, questionId: ids[1]!, alternativeId: "A" }))
       .rejects.toMatchObject({ code: "NOT_CURRENT_QUESTION" });
   });

@@ -2,7 +2,7 @@ import eslint from "@eslint/js";
 import tseslint from "typescript-eslint";
 
 export default tseslint.config(
-  { ignores: ["dist", "node_modules", ".skybridge", ".vercel", "prisma/*.db*", "eslint.config.js", "enem-api"] },
+  { ignores: ["dist", "node_modules", ".skybridge", ".vercel", "prisma/*.db*", "eslint.config.js", "enem-api", "data"] },
   eslint.configs.recommended,
   ...tseslint.configs.recommendedTypeChecked,
   {

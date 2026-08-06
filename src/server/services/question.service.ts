@@ -1,9 +1,8 @@
-import type { Prisma } from "@prisma/client";
 import { ENEM_DISCIPLINE_TOPICS, LEVELS, TOPICS, type Level, type Topic } from "../../shared/constants/exam.js";
 import type { PublicQuestion } from "../../shared/types/exam.js";
 import { ExamError } from "../errors/exam-error.js";
 import type { EnemQuestion } from "../repositories/enem.repository.js";
-import type { InternalQuestion } from "../repositories/question.repository.js";
+import type { InternalQuestion, QuestionDoc } from "../repositories/question.repository.js";
 
 function asTopic(value: string): Topic {
   if (!TOPICS.includes(value as Topic)) throw new ExamError("INVALID_QUESTION_DATA", "Assunto inválido no banco.");
@@ -20,7 +19,10 @@ const IMAGE_MARKDOWN_RE = /!\[\]\(([^)]+)\)/g;
 // A própria API do ENEM referencia esse placeholder quando a imagem original se perdeu
 // (ex.: ENEM 2023, questões 1 e 44) — resolve como um SVG real de "imagem quebrada", então
 // precisa ser filtrado explicitamente em vez de aparecer como se fosse uma figura da prova.
-const MISSING_IMAGE_URL = "/assets/broken-image.svg";
+// Mesmo arquivo hospedado no Cloudinary por scripts/upload-cloudinary.ts (pasta "enem-files").
+const MISSING_IMAGE_URL = process.env.CLOUDINARY_IMAGE_BASE_URL
+  ? `${process.env.CLOUDINARY_IMAGE_BASE_URL}broken-image.svg`
+  : "https://res.cloudinary.com/gisdr0od/image/upload/v1786040662/enem-files/broken-image.svg";
 
 // O statement guarda imagens como markdown (`![](url)`), copiado direto do `context` do ENEM;
 // extraímos as URLs aqui para renderizar <img> de verdade em vez de exigir um renderer de markdown.
@@ -52,19 +54,20 @@ function enemTopic(discipline: string): Topic {
   return topic;
 }
 
-export function enemQuestionToData(question: EnemQuestion, year: number): Prisma.QuestionCreateInput {
+export function enemQuestionToData(question: EnemQuestion, year: number): QuestionDoc {
   const context = (question.context ?? "").trim();
   const statement = context ? `${context}\n\n${question.alternativesIntroduction}` : question.alternativesIntroduction;
   return {
-    id: `enem-${year}-${question.index}`,
+    _id: `enem-${year}-${question.index}`,
     topic: enemTopic(question.discipline),
     level: "enem",
     statement,
-    alternativesJson: JSON.stringify(question.alternatives.map(({ letter, text, file }) => ({
+    code: null,
+    alternatives: question.alternatives.map(({ letter, text, file }) => ({
       id: letter,
       ...(text ? { text } : {}),
       ...(file && file !== MISSING_IMAGE_URL ? { image: file } : {}),
-    }))),
+    })),
     correctAlternativeId: question.correctAlternative,
     explanation: `Gabarito oficial ENEM ${year}: alternativa ${question.correctAlternative}.`,
   };

@@ -1,35 +1,37 @@
-import type { ExamAttempt, PrismaClient } from "@prisma/client";
+import type { Db, MongoClient } from "mongodb";
 import { TOPICS, type Topic } from "../../shared/constants/exam.js";
 import type { ExamReport, FinishExamResponse } from "../../shared/types/exam.js";
-import { prisma as defaultPrisma } from "../db.js";
+import { db as defaultDb, mongoClient as defaultMongoClient } from "../db.js";
 import { ExamError } from "../errors/exam-error.js";
 import { findQuestion } from "../repositories/question.repository.js";
-import { ExamService } from "./exam.service.js";
+import { ANSWERS_COLLECTION, ATTEMPTS_COLLECTION, ExamService, type ExamAnswerDoc, type ExamAttemptDoc } from "./exam.service.js";
 import { extractImages } from "./question.service.js";
 
-function idsOf(attempt: ExamAttempt): string[] {
-  return JSON.parse(attempt.questionIdsJson) as string[];
-}
-
 export class ResultService {
-  constructor(private readonly db: PrismaClient = defaultPrisma) {}
+  constructor(
+    private readonly db: Db = defaultDb,
+    private readonly client: MongoClient = defaultMongoClient,
+  ) {}
 
   async finishExam(examId: string): Promise<FinishExamResponse> {
-    const found = await this.db.examAttempt.findUnique({ where: { id: examId } });
+    const collection = this.db.collection<ExamAttemptDoc>(ATTEMPTS_COLLECTION);
+    const found = await collection.findOne({ _id: examId });
     if (!found) throw new ExamError("EXAM_NOT_FOUND", "Prova não encontrada.", { examId });
-    const attempt = found.status === "finished" ? found : await this.db.examAttempt.update({
-      where: { id: examId }, data: { status: "finished", finishedAt: new Date() },
-    });
-    const base = await new ExamService(this.db).getProgress(examId);
-    const report = await this.buildReport(attempt);
+    const attempt = found.status === "finished" ? found : await collection.findOneAndUpdate(
+      { _id: examId },
+      { $set: { status: "finished", finishedAt: new Date(), updatedAt: new Date() } },
+      { returnDocument: "after" },
+    );
+    const base = await new ExamService(this.db, this.client).getProgress(examId);
+    const report = await this.buildReport(attempt ?? found);
     return { ...base, report };
   }
 
-  private async buildReport(attempt: ExamAttempt): Promise<ExamReport> {
-    const questionIds = idsOf(attempt);
+  private async buildReport(attempt: ExamAttemptDoc): Promise<ExamReport> {
+    const questionIds = attempt.questionIds;
     const [questions, answers] = await Promise.all([
       Promise.all(questionIds.map(async (id) => findQuestion(this.db, id))),
-      this.db.examAnswer.findMany({ where: { examId: attempt.id } }),
+      this.db.collection<ExamAnswerDoc>(ANSWERS_COLLECTION).find({ examId: attempt._id }).toArray(),
     ]);
     const answerByQuestion = new Map(answers.map((answer) => [answer.questionId, answer]));
     const topics = new Map<Topic, { correct: number; total: number }>();

@@ -1,12 +1,39 @@
 import { randomUUID } from "node:crypto";
-import { Prisma, type ExamAnswer, type ExamAttempt, type PrismaClient } from "@prisma/client";
+import type { ClientSession, Db, MongoClient } from "mongodb";
 import { EXAM_STATUSES, LEVELS, TOPICS, type ExamStatus, type Level, type Topic } from "../../shared/constants/exam.js";
 import type { AnswerResult, ExamProgress, ExamToolResponse } from "../../shared/types/exam.js";
-import { prisma as defaultPrisma } from "../db.js";
+import { db as defaultDb, mongoClient as defaultMongoClient } from "../db.js";
 import { ExamError } from "../errors/exam-error.js";
 import { fetchEnemQuestions } from "../repositories/enem.repository.js";
-import { findQuestion, type InternalQuestion } from "../repositories/question.repository.js";
+import { findQuestion, upsertQuestions, type InternalQuestion } from "../repositories/question.repository.js";
 import { enemQuestionToData, toPublicQuestion } from "./question.service.js";
+
+export const ATTEMPTS_COLLECTION = "exam_attempts";
+export const ANSWERS_COLLECTION = "exam_answers";
+
+export interface ExamAttemptDoc {
+  _id: string;
+  userId?: string;
+  sessionId: string;
+  status: string;
+  topic: string;
+  level: string;
+  questionIds: string[];
+  currentQuestionIndex: number;
+  score: number;
+  enemYear?: number;
+  startedAt: Date;
+  updatedAt: Date;
+  finishedAt?: Date;
+}
+
+export interface ExamAnswerDoc {
+  examId: string;
+  questionId: string;
+  selectedAlternativeId: string;
+  correct: boolean;
+  answeredAt: Date;
+}
 
 interface CreateExamArgs {
   year: number;
@@ -33,12 +60,11 @@ async function withExamLock<T>(examId: string, operation: () => Promise<T>): Pro
   }
 }
 
-function parseQuestionIds(attempt: ExamAttempt): string[] {
-  const parsed: unknown = JSON.parse(attempt.questionIdsJson);
-  if (!Array.isArray(parsed) || !parsed.every((item) => typeof item === "string")) {
+function parseQuestionIds(attempt: ExamAttemptDoc): string[] {
+  if (!Array.isArray(attempt.questionIds) || !attempt.questionIds.every((item) => typeof item === "string")) {
     throw new ExamError("INVALID_EXAM_DATA", "A ordem de questões da prova é inválida.");
   }
-  return parsed;
+  return attempt.questionIds;
 }
 
 function examStatus(value: string): ExamStatus {
@@ -56,13 +82,13 @@ function examLevel(value: string): Level {
   return value as Level;
 }
 
-async function requireAttempt(client: PrismaClient, examId: string): Promise<ExamAttempt> {
-  const attempt = await client.examAttempt.findUnique({ where: { id: examId } });
+async function requireAttempt(db: Db, examId: string, options?: { session?: ClientSession }): Promise<ExamAttemptDoc> {
+  const attempt = await db.collection<ExamAttemptDoc>(ATTEMPTS_COLLECTION).findOne({ _id: examId }, options?.session ? { session: options.session } : {});
   if (!attempt) throw new ExamError("EXAM_NOT_FOUND", "Prova não encontrada.", { examId });
   return attempt;
 }
 
-function progressOf(attempt: ExamAttempt, answered: number): ExamProgress {
+function progressOf(attempt: ExamAttemptDoc, answered: number): ExamProgress {
   const total = parseQuestionIds(attempt).length;
   return {
     current: Math.min(attempt.currentQuestionIndex + 1, total),
@@ -74,17 +100,18 @@ function progressOf(attempt: ExamAttempt, answered: number): ExamProgress {
 }
 
 async function responseFor(
-  client: PrismaClient,
-  attempt: ExamAttempt,
+  db: Db,
+  attempt: ExamAttemptDoc,
   result?: AnswerResult,
+  options?: { session?: ClientSession },
 ): Promise<ExamToolResponse> {
   const questionIds = parseQuestionIds(attempt);
-  const answered = await client.examAnswer.count({ where: { examId: attempt.id } });
+  const answered = await db.collection<ExamAnswerDoc>(ANSWERS_COLLECTION).countDocuments({ examId: attempt._id }, options?.session ? { session: options.session } : {});
   const questionId = attempt.status === "finished" ? undefined : questionIds[attempt.currentQuestionIndex];
-  const question = questionId ? toPublicQuestion(await findQuestion(client, questionId)) : undefined;
+  const question = questionId ? toPublicQuestion(await findQuestion(db, questionId, options)) : undefined;
   return {
     exam: {
-      id: attempt.id,
+      id: attempt._id,
       status: examStatus(attempt.status),
       topic: examTopic(attempt.topic),
       level: examLevel(attempt.level),
@@ -96,7 +123,7 @@ async function responseFor(
   };
 }
 
-function answerResult(answer: ExamAnswer, question: InternalQuestion): AnswerResult {
+function answerResult(answer: ExamAnswerDoc, question: InternalQuestion): AnswerResult {
   return {
     correct: answer.correct,
     selectedAlternativeId: answer.selectedAlternativeId,
@@ -106,11 +133,14 @@ function answerResult(answer: ExamAnswer, question: InternalQuestion): AnswerRes
 }
 
 export class ExamService {
-  constructor(private readonly db: PrismaClient = defaultPrisma) {}
+  constructor(
+    private readonly db: Db = defaultDb,
+    private readonly client: MongoClient = defaultMongoClient,
+  ) {}
 
   async createExam(args: CreateExamArgs): Promise<ExamToolResponse> {
     const year = args.year;
-    const fetched = await fetchEnemQuestions(year, args.numberOfQuestions);
+    const fetched = await fetchEnemQuestions(this.db, year, args.numberOfQuestions);
     if (fetched.length < args.numberOfQuestions) {
       throw new ExamError(
         "INSUFFICIENT_QUESTIONS",
@@ -119,17 +149,24 @@ export class ExamService {
       );
     }
     const data = fetched.map((question) => enemQuestionToData(question, year));
-    await this.db.$transaction(data.map((item) => this.db.question.upsert({
-      where: { id: item.id }, create: item, update: item,
-    })));
-    const attempt = await this.db.examAttempt.create({ data: {
+    await upsertQuestions(this.db, data);
+
+    const now = new Date();
+    const attempt: ExamAttemptDoc = {
+      _id: randomUUID(),
+      sessionId: args.sessionId ?? randomUUID(),
+      ...(args.userId ? { userId: args.userId } : {}),
+      status: "in_progress",
       topic: "ENEM",
       level: "enem",
       enemYear: year,
-      questionIdsJson: JSON.stringify(data.map((item) => item.id)),
-      sessionId: args.sessionId ?? randomUUID(),
-      ...(args.userId ? { userId: args.userId } : {}),
-    } });
+      questionIds: data.map((item) => item._id),
+      currentQuestionIndex: 0,
+      score: 0,
+      startedAt: now,
+      updatedAt: now,
+    };
+    await this.db.collection<ExamAttemptDoc>(ATTEMPTS_COLLECTION).insertOne(attempt);
     return responseFor(this.db, attempt);
   }
 
@@ -144,66 +181,83 @@ export class ExamService {
   async pauseExam(examId: string): Promise<ExamToolResponse> {
     const attempt = await requireAttempt(this.db, examId);
     if (attempt.status === "finished") throw new ExamError("EXAM_FINISHED", "A prova já foi finalizada.");
-    const updated = attempt.status === "paused" ? attempt : await this.db.examAttempt.update({
-      where: { id: examId }, data: { status: "paused" },
-    });
-    return responseFor(this.db, updated);
+    const updated = attempt.status === "paused" ? attempt : await this.db.collection<ExamAttemptDoc>(ATTEMPTS_COLLECTION).findOneAndUpdate(
+      { _id: examId }, { $set: { status: "paused", updatedAt: new Date() } }, { returnDocument: "after" },
+    );
+    return responseFor(this.db, updated ?? attempt);
   }
 
   async resumeExam(examId: string): Promise<ExamToolResponse> {
     const attempt = await requireAttempt(this.db, examId);
     if (attempt.status === "finished") throw new ExamError("EXAM_FINISHED", "A prova já foi finalizada.");
-    const updated = attempt.status === "in_progress" ? attempt : await this.db.examAttempt.update({
-      where: { id: examId }, data: { status: "in_progress" },
-    });
-    return responseFor(this.db, updated);
+    const updated = attempt.status === "in_progress" ? attempt : await this.db.collection<ExamAttemptDoc>(ATTEMPTS_COLLECTION).findOneAndUpdate(
+      { _id: examId }, { $set: { status: "in_progress", updatedAt: new Date() } }, { returnDocument: "after" },
+    );
+    return responseFor(this.db, updated ?? attempt);
   }
 
   async submitAnswer(args: SubmitAnswerArgs): Promise<ExamToolResponse> {
-    return withExamLock(args.examId, async () => this.db.$transaction(async (tx) => {
-      const attempt = await tx.examAttempt.findUnique({ where: { id: args.examId } });
-      if (!attempt) throw new ExamError("EXAM_NOT_FOUND", "Prova não encontrada.", { examId: args.examId });
+    return withExamLock(args.examId, async () => {
+      const session = this.client.startSession();
+      try {
+        let response!: ExamToolResponse;
+        await session.withTransaction(async () => {
+          const attempts = this.db.collection<ExamAttemptDoc>(ATTEMPTS_COLLECTION);
+          const answers = this.db.collection<ExamAnswerDoc>(ANSWERS_COLLECTION);
 
-      const existing = await tx.examAnswer.findUnique({
-        where: { examId_questionId: { examId: args.examId, questionId: args.questionId } },
-      });
-      if (existing) {
-        if (existing.selectedAlternativeId !== args.alternativeId) {
-          throw new ExamError("ANSWER_ALREADY_SUBMITTED", "Esta questão já recebeu outra resposta.");
-        }
-        const current = await tx.examAttempt.findUniqueOrThrow({ where: { id: args.examId } });
-        return responseFor(tx as unknown as PrismaClient, current, answerResult(existing, await findQuestion(tx, args.questionId)));
+          const attempt = await attempts.findOne({ _id: args.examId }, { session });
+          if (!attempt) throw new ExamError("EXAM_NOT_FOUND", "Prova não encontrada.", { examId: args.examId });
+
+          const existing = await answers.findOne({ examId: args.examId, questionId: args.questionId }, { session });
+          if (existing) {
+            if (existing.selectedAlternativeId !== args.alternativeId) {
+              throw new ExamError("ANSWER_ALREADY_SUBMITTED", "Esta questão já recebeu outra resposta.");
+            }
+            const question = await findQuestion(this.db, args.questionId, { session });
+            response = await responseFor(this.db, attempt, answerResult(existing, question), { session });
+            return;
+          }
+
+          if (attempt.status === "paused") throw new ExamError("EXAM_PAUSED", "Retome a prova antes de responder.");
+          if (attempt.status === "finished") throw new ExamError("EXAM_FINISHED", "A prova já foi finalizada.");
+
+          const questionIds = parseQuestionIds(attempt);
+          const currentQuestionId = questionIds[attempt.currentQuestionIndex];
+          if (currentQuestionId !== args.questionId) {
+            throw new ExamError("NOT_CURRENT_QUESTION", "A questão informada não é a questão atual.", { currentQuestionId });
+          }
+
+          const question = await findQuestion(this.db, args.questionId, { session });
+          if (!question.alternatives.some(({ id }) => id === args.alternativeId)) {
+            throw new ExamError("INVALID_ALTERNATIVE", "A alternativa não pertence à questão atual.");
+          }
+
+          const correct = question.correctAlternativeId === args.alternativeId;
+          const answer: ExamAnswerDoc = {
+            examId: args.examId,
+            questionId: args.questionId,
+            selectedAlternativeId: args.alternativeId,
+            correct,
+            answeredAt: new Date(),
+          };
+          await answers.insertOne(answer, { session });
+
+          const nextIndex = attempt.currentQuestionIndex + 1;
+          const completed = nextIndex >= questionIds.length;
+          const updated = await attempts.findOneAndUpdate(
+            { _id: args.examId },
+            {
+              $set: { currentQuestionIndex: nextIndex, updatedAt: new Date(), ...(completed ? { status: "finished", finishedAt: new Date() } : {}) },
+              $inc: { score: correct ? 1 : 0 },
+            },
+            { returnDocument: "after", session },
+          );
+          response = await responseFor(this.db, updated!, answerResult(answer, question), { session });
+        });
+        return response;
+      } finally {
+        await session.endSession();
       }
-
-      if (attempt.status === "paused") throw new ExamError("EXAM_PAUSED", "Retome a prova antes de responder.");
-      if (attempt.status === "finished") throw new ExamError("EXAM_FINISHED", "A prova já foi finalizada.");
-
-      const questionIds = parseQuestionIds(attempt);
-      const currentQuestionId = questionIds[attempt.currentQuestionIndex];
-      if (currentQuestionId !== args.questionId) {
-        throw new ExamError("NOT_CURRENT_QUESTION", "A questão informada não é a questão atual.", { currentQuestionId });
-      }
-
-      const question = await findQuestion(tx, args.questionId);
-      if (!question.alternatives.some(({ id }) => id === args.alternativeId)) {
-        throw new ExamError("INVALID_ALTERNATIVE", "A alternativa não pertence à questão atual.");
-      }
-
-      const correct = question.correctAlternativeId === args.alternativeId;
-      const answer = await tx.examAnswer.create({ data: {
-        examId: args.examId,
-        questionId: args.questionId,
-        selectedAlternativeId: args.alternativeId,
-        correct,
-      } });
-      const nextIndex = attempt.currentQuestionIndex + 1;
-      const completed = nextIndex >= questionIds.length;
-      const updated = await tx.examAttempt.update({ where: { id: args.examId }, data: {
-        currentQuestionIndex: nextIndex,
-        score: { increment: correct ? 1 : 0 },
-        ...(completed ? { status: "finished", finishedAt: new Date() } : {}),
-      } });
-      return responseFor(tx as unknown as PrismaClient, updated, answerResult(answer, question));
-    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }));
+    });
   }
 }
