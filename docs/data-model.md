@@ -35,7 +35,8 @@ Um documento por tentativa de prova.
 | `level` | string | sempre `"enem"` |
 | `disciplina` | string | label escolhida (`Linguagens`, `Ciências Humanas`, `Ciências da Natureza`, `Matemática`) ou `"todas"`; exposta como `ExamSummary.disciplina` |
 | `questionIds` | `string[]` | array real de `questions._id`, sorteadas aleatoriamente (`$sample`) dentre todos os anos que batem com a disciplina |
-| `currentQuestionIndex` | number | posição atual em `questionIds`; só avança em `submit_answer` |
+| `currentQuestionIndex` | number | posição "atual" em `questionIds` — a questão que a view mostra por padrão; navegação livre (`get_current_question` com `questionId`, ou uma resposta nova em `submit_answer`) é o que move esse índice; reenviar a mesma resposta de uma questão já respondida não move |
+| `markedQuestionIds` | `string[]` | questões marcadas para revisão (`mark_question`); exposto por questão como `QuestionStatus.marked` |
 | `score` | number | contagem de acertos |
 | `startedAt`, `updatedAt`, `finishedAt?` | Date | |
 

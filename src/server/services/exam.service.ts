@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { ClientSession, Db, MongoClient } from "mongodb";
 import { disciplineValueFromLabel, EXAM_STATUSES, LEVELS, TOPICS, type ExamStatus, type Level, type Topic } from "../../shared/constants/exam.js";
-import type { AnswerResult, ExamProgress, ExamToolResponse } from "../../shared/types/exam.js";
+import type { AnswerResult, ExamProgress, ExamToolResponse, QuestionStatus } from "../../shared/types/exam.js";
 import { db as defaultDb, mongoClient as defaultMongoClient } from "../db.js";
 import { ExamError } from "../errors/exam-error.js";
 import { fetchEnemQuestionsByDiscipline } from "../repositories/enem.repository.js";
@@ -20,6 +20,7 @@ export interface ExamAttemptDoc {
   level: string;
   questionIds: string[];
   currentQuestionIndex: number;
+  markedQuestionIds: string[];
   score: number;
   disciplina: string;
   startedAt: Date;
@@ -42,6 +43,7 @@ interface CreateExamArgs {
   sessionId?: string | undefined;
 }
 interface SubmitAnswerArgs { examId: string; questionId: string; alternativeId: string }
+interface MarkQuestionArgs { examId: string; questionId: string; marked: boolean }
 
 const locks = new Map<string, Promise<void>>();
 
@@ -99,16 +101,47 @@ function progressOf(attempt: ExamAttemptDoc, answered: number): ExamProgress {
   };
 }
 
+function answerResult(answer: ExamAnswerDoc, question: InternalQuestion): AnswerResult {
+  return {
+    correct: answer.correct,
+    selectedAlternativeId: answer.selectedAlternativeId,
+    correctAlternativeId: question.correctAlternativeId,
+    explanation: question.explanation,
+  };
+}
+
 async function responseFor(
   db: Db,
   attempt: ExamAttemptDoc,
   result?: AnswerResult,
-  options?: { session?: ClientSession },
+  options?: { session?: ClientSession; viewQuestionId?: string },
 ): Promise<ExamToolResponse> {
   const questionIds = parseQuestionIds(attempt);
-  const answered = await db.collection<ExamAnswerDoc>(ANSWERS_COLLECTION).countDocuments({ examId: attempt._id }, options?.session ? { session: options.session } : {});
-  const questionId = attempt.status === "finished" ? undefined : questionIds[attempt.currentQuestionIndex];
-  const question = questionId ? toPublicQuestion(await findQuestion(db, questionId, options)) : undefined;
+  const mongoOptions = options?.session ? { session: options.session } : {};
+  const answers = await db.collection<ExamAnswerDoc>(ANSWERS_COLLECTION).find({ examId: attempt._id }, mongoOptions).toArray();
+  const answerByQuestion = new Map(answers.map((answer) => [answer.questionId, answer]));
+  const marked = new Set(attempt.markedQuestionIds ?? []);
+
+  const questions: QuestionStatus[] = questionIds.map((id, i) => {
+    const answer = answerByQuestion.get(id);
+    return {
+      questionId: id,
+      index: i + 1,
+      status: answer ? (answer.correct ? "correct" : "incorrect") : "unanswered",
+      marked: marked.has(id),
+    };
+  });
+
+  const viewedId = options?.viewQuestionId ?? (attempt.status === "finished" ? undefined : questionIds[attempt.currentQuestionIndex]);
+  let question: ExamToolResponse["question"];
+  let viewedResult = result;
+  if (viewedId) {
+    const internal = await findQuestion(db, viewedId, options);
+    question = toPublicQuestion(internal);
+    const existingAnswer = answerByQuestion.get(viewedId);
+    if (!viewedResult && existingAnswer) viewedResult = answerResult(existingAnswer, internal);
+  }
+
   return {
     exam: {
       id: attempt._id,
@@ -117,18 +150,10 @@ async function responseFor(
       level: examLevel(attempt.level),
       disciplina: attempt.disciplina,
     },
-    progress: progressOf(attempt, answered),
+    progress: progressOf(attempt, answers.length),
+    questions,
     ...(question ? { question } : {}),
-    ...(result ? { result } : {}),
-  };
-}
-
-function answerResult(answer: ExamAnswerDoc, question: InternalQuestion): AnswerResult {
-  return {
-    correct: answer.correct,
-    selectedAlternativeId: answer.selectedAlternativeId,
-    correctAlternativeId: question.correctAlternativeId,
-    explanation: question.explanation,
+    ...(viewedResult ? { result: viewedResult } : {}),
   };
 }
 
@@ -164,6 +189,7 @@ export class ExamService {
       disciplina: args.disciplina,
       questionIds: data.map((item) => item._id),
       currentQuestionIndex: 0,
+      markedQuestionIds: [],
       score: 0,
       startedAt: now,
       updatedAt: now,
@@ -172,8 +198,20 @@ export class ExamService {
     return responseFor(this.db, attempt);
   }
 
-  async getCurrentQuestion(examId: string): Promise<ExamToolResponse> {
-    return responseFor(this.db, await requireAttempt(this.db, examId));
+  // Sem questionId, devolve a questão atualmente "aberta". Com questionId, navega pra ela —
+  // qualquer questão da prova, respondida ou não (grade de navegação livre) — e persiste isso
+  // como a nova posição atual, pra get_exam_progress/reaberturas da view lembrarem de onde parou.
+  async getCurrentQuestion(examId: string, questionId?: string): Promise<ExamToolResponse> {
+    const attempt = await requireAttempt(this.db, examId);
+    if (!questionId) return responseFor(this.db, attempt);
+
+    const index = parseQuestionIds(attempt).indexOf(questionId);
+    if (index === -1) throw new ExamError("QUESTION_NOT_IN_EXAM", "A questão informada não pertence a esta prova.", { questionId });
+
+    const updated = index === attempt.currentQuestionIndex ? attempt : await this.db.collection<ExamAttemptDoc>(ATTEMPTS_COLLECTION).findOneAndUpdate(
+      { _id: examId }, { $set: { currentQuestionIndex: index, updatedAt: new Date() } }, { returnDocument: "after" },
+    );
+    return responseFor(this.db, updated ?? attempt);
   }
 
   async getProgress(examId: string): Promise<ExamToolResponse> {
@@ -198,6 +236,21 @@ export class ExamService {
     return responseFor(this.db, updated ?? attempt);
   }
 
+  async markQuestion(args: MarkQuestionArgs): Promise<ExamToolResponse> {
+    const attempt = await requireAttempt(this.db, args.examId);
+    if (attempt.status === "finished") throw new ExamError("EXAM_FINISHED", "A prova já foi finalizada.");
+    if (!parseQuestionIds(attempt).includes(args.questionId)) {
+      throw new ExamError("QUESTION_NOT_IN_EXAM", "A questão informada não pertence a esta prova.", { questionId: args.questionId });
+    }
+    const update = args.marked
+      ? { $addToSet: { markedQuestionIds: args.questionId }, $set: { updatedAt: new Date() } }
+      : { $pull: { markedQuestionIds: args.questionId }, $set: { updatedAt: new Date() } };
+    const updated = await this.db.collection<ExamAttemptDoc>(ATTEMPTS_COLLECTION).findOneAndUpdate(
+      { _id: args.examId }, update, { returnDocument: "after" },
+    );
+    return responseFor(this.db, updated ?? attempt);
+  }
+
   async submitAnswer(args: SubmitAnswerArgs): Promise<ExamToolResponse> {
     return withExamLock(args.examId, async () => {
       const session = this.client.startSession();
@@ -210,24 +263,28 @@ export class ExamService {
           const attempt = await attempts.findOne({ _id: args.examId }, { session });
           if (!attempt) throw new ExamError("EXAM_NOT_FOUND", "Prova não encontrada.", { examId: args.examId });
 
+          // Navegação livre: qualquer questão da prova pode ser respondida, não só a "atual".
+          const questionIds = parseQuestionIds(attempt);
+          const targetIndex = questionIds.indexOf(args.questionId);
+          if (targetIndex === -1) {
+            throw new ExamError("QUESTION_NOT_IN_EXAM", "A questão informada não pertence a esta prova.", { questionId: args.questionId });
+          }
+
           const existing = await answers.findOne({ examId: args.examId, questionId: args.questionId }, { session });
           if (existing) {
             if (existing.selectedAlternativeId !== args.alternativeId) {
               throw new ExamError("ANSWER_ALREADY_SUBMITTED", "Esta questão já recebeu outra resposta.");
             }
+            // Não mexe em currentQuestionIndex — é só uma confirmação idempotente. Passa
+            // viewQuestionId pra devolver question/result desta questão sem descasar do statement,
+            // mas sem mover a posição "atual" da prova (que fica intocada).
             const question = await findQuestion(this.db, args.questionId, { session });
-            response = await responseFor(this.db, attempt, answerResult(existing, question), { session });
+            response = await responseFor(this.db, attempt, answerResult(existing, question), { session, viewQuestionId: args.questionId });
             return;
           }
 
           if (attempt.status === "paused") throw new ExamError("EXAM_PAUSED", "Retome a prova antes de responder.");
           if (attempt.status === "finished") throw new ExamError("EXAM_FINISHED", "A prova já foi finalizada.");
-
-          const questionIds = parseQuestionIds(attempt);
-          const currentQuestionId = questionIds[attempt.currentQuestionIndex];
-          if (currentQuestionId !== args.questionId) {
-            throw new ExamError("NOT_CURRENT_QUESTION", "A questão informada não é a questão atual.", { currentQuestionId });
-          }
 
           const question = await findQuestion(this.db, args.questionId, { session });
           if (!question.alternatives.some(({ id }) => id === args.alternativeId)) {
@@ -244,8 +301,11 @@ export class ExamService {
           };
           await answers.insertOne(answer, { session });
 
-          const nextIndex = attempt.currentQuestionIndex + 1;
-          const completed = nextIndex >= questionIds.length;
+          // Concluída quando todas as questões tiverem resposta — não mais "chegou no fim da
+          // lista", já que a ordem de resposta pode não ser sequencial.
+          const answeredCount = await answers.countDocuments({ examId: args.examId }, { session });
+          const completed = answeredCount >= questionIds.length;
+          const nextIndex = Math.min(attempt.currentQuestionIndex + 1, questionIds.length - 1);
           const updated = await attempts.findOneAndUpdate(
             { _id: args.examId },
             {

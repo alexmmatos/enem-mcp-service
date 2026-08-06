@@ -29,9 +29,17 @@ export interface AnswerResult {
 
 export interface ExamSummary { id: string; status: ExamStatus; topic: Topic; level: Level; disciplina: string }
 
+export interface QuestionStatus {
+  questionId: string;
+  index: number;
+  status: "unanswered" | "correct" | "incorrect";
+  marked: boolean;
+}
+
 export interface ExamToolResponse {
   exam: ExamSummary;
   progress: ExamProgress;
+  questions: QuestionStatus[];
   question?: PublicQuestion;
   result?: AnswerResult;
 }

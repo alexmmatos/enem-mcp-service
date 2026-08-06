@@ -1,10 +1,11 @@
 import { McpServer } from "skybridge/server";
 import { ensureIndexes } from "./server/db.js";
-import { createExamInput, examIdInput, submitAnswerInput } from "./server/schemas/exam.schemas.js";
+import { createExamInput, examIdInput, getCurrentQuestionInput, markQuestionInput, submitAnswerInput } from "./server/schemas/exam.schemas.js";
 import { createExam } from "./server/tools/create-exam.js";
 import { finishExam } from "./server/tools/finish-exam.js";
 import { getCurrentQuestion } from "./server/tools/get-current-question.js";
 import { getExamProgress } from "./server/tools/get-exam-progress.js";
+import { markQuestion } from "./server/tools/mark-question.js";
 import { pauseExam } from "./server/tools/pause-exam.js";
 import { resumeExam } from "./server/tools/resume-exam.js";
 import { submitAnswer } from "./server/tools/submit-answer.js";
@@ -35,17 +36,27 @@ const server = new McpServer(
   .registerTool(
     {
       name: "get_current_question",
-      description: "Recupera a questão atual sem avançar a prova.",
-      inputSchema: examIdInput,
-      annotations: { title: "Ver questão atual", readOnlyHint: true, destructiveHint: false, openWorldHint: false },
+      description: "Recupera a questão atual sem avançar a prova, ou navega para outra questão específica da prova (respondida ou não) informando questionId.",
+      inputSchema: getCurrentQuestionInput,
+      annotations: { title: "Ver questão", readOnlyHint: true, destructiveHint: false, openWorldHint: false },
       _meta: standardMeta("Recuperando a questão…", "Questão recuperada."),
     },
     getCurrentQuestion,
   )
   .registerTool(
     {
+      name: "mark_question",
+      description: "Marca ou desmarca uma questão da prova para revisão posterior.",
+      inputSchema: markQuestionInput,
+      annotations: { title: "Marcar para revisão", readOnlyHint: false, destructiveHint: false, openWorldHint: false },
+      _meta: standardMeta("Atualizando marcação…", "Marcação atualizada."),
+    },
+    markQuestion,
+  )
+  .registerTool(
+    {
       name: "submit_answer",
-      description: "Registra de forma idempotente a resposta da questão atual e avança a prova.",
+      description: "Registra de forma idempotente a resposta de qualquer questão ainda não respondida da prova (não precisa ser a atual) e avança a prova.",
       inputSchema: submitAnswerInput,
       annotations: { title: "Responder questão", readOnlyHint: false, destructiveHint: false, openWorldHint: false },
       _meta: standardMeta("Validando a resposta…", "Resposta registrada."),

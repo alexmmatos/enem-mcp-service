@@ -6,6 +6,7 @@ import { ExamHeader } from "../ExamHeader/index.js";
 import { ExamProgress } from "../ExamProgress/index.js";
 import { ExamResult } from "../ExamResult/index.js";
 import { QuestionCard } from "../QuestionCard/index.js";
+import { QuestionNavigator } from "../QuestionNavigator/index.js";
 import styles from "./ExamApp.module.css";
 
 type Structured = ExamToolResponse | FinishExamResponse | ToolErrorResponse;
@@ -49,6 +50,8 @@ export function ExamApp() {
   const lastProgress = useRef<unknown>(undefined);
   const lastQuestion = useRef<unknown>(undefined);
   const lastSubmit = useRef<unknown>(undefined);
+  const lastNavigate = useRef<unknown>(undefined);
+  const lastMark = useRef<unknown>(undefined);
   const [displayMode, setDisplayMode] = useDisplayMode();
   const { theme } = useLayout();
   const sendFollowUp = useSendFollowUpMessage();
@@ -59,9 +62,11 @@ export function ExamApp() {
   const pauseTool = useCallTool("pause_exam");
   const resumeTool = useCallTool("resume_exam");
   const finishTool = useCallTool("finish_exam");
+  const navigateTool = useCallTool("get_current_question");
+  const markTool = useCallTool("mark_question");
 
   const examId = snapshot?.exam.id ?? viewState.examId;
-  const busy = submitTool.isPending || pauseTool.isPending || resumeTool.isPending || finishTool.isPending;
+  const busy = submitTool.isPending || pauseTool.isPending || resumeTool.isPending || finishTool.isPending || navigateTool.isPending || markTool.isPending;
 
   useEffect(() => {
     if (lastInitial.current === output) return;
@@ -114,6 +119,23 @@ export function ExamApp() {
   }, [pauseTool.data, resumeTool.data]);
 
   useEffect(() => {
+    if (lastNavigate.current === navigateTool.data) return;
+    lastNavigate.current = navigateTool.data;
+    const value = structured(navigateTool.data);
+    if (!value) return;
+    const error = errorMessage(value);
+    if (error) { setMessage(error); return; }
+    if (isExam(value)) { setSnapshot(value); setFeedback(value.result); setSelected(null); setAnsweredView(null); setMessage(null); }
+  }, [navigateTool.data]);
+
+  useEffect(() => {
+    if (lastMark.current === markTool.data) return;
+    lastMark.current = markTool.data;
+    const value = structured(markTool.data);
+    if (isExam(value)) setSnapshot(value);
+  }, [markTool.data]);
+
+  useEffect(() => {
     const value = structured(finishTool.data);
     if (!value) return;
     const error = errorMessage(value);
@@ -144,6 +166,18 @@ export function ExamApp() {
 
   const next = () => { setFeedback(undefined); setSelected(null); setAnsweredView(null); };
 
+  const navigate = (questionId: string) => {
+    if (!snapshot || busy || snapshot.exam.status === "paused" || questionId === snapshot.question?.id) return;
+    setMessage(null);
+    navigateTool.callTool({ examId: snapshot.exam.id, questionId });
+  };
+
+  const toggleMark = () => {
+    if (!snapshot?.question || busy) return;
+    const current = snapshot.questions.find((q) => q.questionId === snapshot.question!.id);
+    markTool.callTool({ examId: snapshot.exam.id, questionId: snapshot.question.id, marked: !current?.marked });
+  };
+
   if (isInitialPending || !snapshot) return <div className={`${styles.shell} ${theme === "dark" ? styles.dark : ""}`}><div className={styles.loading}>Restaurando sua prova…</div></div>;
   if (report) return <div className={`${styles.shell} ${theme === "dark" ? styles.dark : ""}`} data-llm={`Prova finalizada com ${report.percentage}% de aproveitamento.`}><ExamResult report={report} onRestart={() => sendFollowUp("Quero iniciar outra prova do ENEM. Pergunte a disciplina (ou todas) e a quantidade de questões.")} /></div>;
 
@@ -151,23 +185,32 @@ export function ExamApp() {
     <ExamHeader displayMode={displayMode} onSetDisplayMode={setDisplayMode} />
     {message ? <p className={styles.error} role="alert">{message}</p> : null}
     <div className={styles.layout}>
-      <aside className={styles.panel}>
-        <div><div className={styles.label}>Prova</div><p className={styles.value}>ENEM — {snapshot.exam.disciplina}</p></div>
-        <div><div className={styles.label}>Disciplina</div><p className={styles.value}>{snapshot.question?.topic ?? "—"}</p></div>
-        <div><div className={styles.label}>Pontuação</div><p className={styles.value}>{snapshot.progress.correct} acerto(s)</p></div>
-        <div><div className={styles.label}>Status</div><span className={styles.status}>{snapshot.exam.status === "paused" ? "Pausada" : "Em andamento"}</span></div>
-        <div><div className={styles.label}>Tempo</div><p className={styles.value}>{formatElapsed(elapsedSeconds)}</p></div>
-        <ExamProgress progress={snapshot.progress} />
-        <div className={styles.actions}>
-          {snapshot.exam.status === "paused"
-            ? <button className={styles.secondary} type="button" disabled={busy} onClick={() => resumeTool.callTool({ examId: snapshot.exam.id })}>Retomar</button>
-            : <button className={styles.ghost} type="button" disabled={busy} onClick={() => pauseTool.callTool({ examId: snapshot.exam.id })}>Pausar</button>}
-        </div>
-      </aside>
+      <div className={styles.leftColumn}>
+        <aside className={styles.panel}>
+          <div><div className={styles.label}>Prova</div><p className={styles.value}>ENEM — {snapshot.exam.disciplina}</p></div>
+          <div><div className={styles.label}>Disciplina</div><p className={styles.value}>{snapshot.question?.topic ?? "—"}</p></div>
+          <div><div className={styles.label}>Pontuação</div><p className={styles.value}>{snapshot.progress.correct} acerto(s)</p></div>
+          <div><div className={styles.label}>Status</div><span className={styles.status}>{snapshot.exam.status === "paused" ? "Pausada" : "Em andamento"}</span></div>
+          <div><div className={styles.label}>Tempo</div><p className={styles.value}>{formatElapsed(elapsedSeconds)}</p></div>
+          <ExamProgress progress={snapshot.progress} />
+          <div className={styles.actions}>
+            {snapshot.exam.status === "paused"
+              ? <button className={styles.secondary} type="button" disabled={busy} onClick={() => resumeTool.callTool({ examId: snapshot.exam.id })}>Retomar</button>
+              : <button className={styles.ghost} type="button" disabled={busy} onClick={() => pauseTool.callTool({ examId: snapshot.exam.id })}>Pausar</button>}
+          </div>
+        </aside>
+        <QuestionNavigator
+          questions={snapshot.questions}
+          currentQuestionId={snapshot.question?.id}
+          disabled={busy || snapshot.exam.status === "paused"}
+          onNavigate={navigate}
+        />
+      </div>
       {(() => {
         const view = feedback && answeredView ? answeredView : { question: snapshot.question, current: snapshot.progress.current, total: snapshot.progress.total };
+        const marked = view.question ? (snapshot.questions.find((q) => q.questionId === view.question!.id)?.marked ?? false) : false;
         return view.question
-          ? <QuestionCard question={view.question} current={view.current} total={view.total} selected={selected} busy={busy || snapshot.exam.status === "paused"} feedback={feedback} onSelect={setSelected} onSubmit={submit} onNext={next} />
+          ? <QuestionCard question={view.question} current={view.current} total={view.total} selected={selected} marked={marked} busy={busy || snapshot.exam.status === "paused"} feedback={feedback} onSelect={setSelected} onSubmit={submit} onNext={next} onToggleMark={toggleMark} />
           : <main className={styles.questionCard}><p>Calculando o resultado…</p></main>;
       })()}
     </div>

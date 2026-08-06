@@ -70,7 +70,7 @@ Erros específicos: `INSUFFICIENT_QUESTIONS` (prova daquele ano tem menos quest�
 1. **Lock em memória por `examId`** (`withExamLock`, um `Map<string, Promise<void>>` que serializa chamadas concorrentes ao mesmo `examId` dentro do processo).
 2. **Transação Mongo** (`client.startSession()` + `session.withTransaction()`, requer replica set) com a constraint única `{ examId: 1, questionId: 1 }` em `exam_answers` (`db.ts`, `ensureIndexes`).
 
-Dentro da transação: se já existe uma resposta para `(examId, questionId)` com a mesma `alternativeId`, retorna o mesmo resultado (idempotência); com `alternativeId` diferente, falha com `ANSWER_ALREADY_SUBMITTED`. Só avança `currentQuestionIndex` e incrementa `score` depois de persistir a resposta, e marca a prova como `finished` na mesma transação quando é a última questão.
+Dentro da transação: se já existe uma resposta para `(examId, questionId)` com a mesma `alternativeId`, retorna o mesmo resultado (idempotência) **sem** mexer em `currentQuestionIndex` — só reusa a resposta já persistida pra montar `question`/`result` da questão reenviada; com `alternativeId` diferente, falha com `ANSWER_ALREADY_SUBMITTED`. Numa resposta nova, incrementa `score`, avança `currentQuestionIndex` pra próxima posição da lista (não necessariamente a questão que acabou de ser respondida — navegação livre permite responder fora de ordem) e marca a prova como `finished` na mesma transação quando **todas** as questões já têm resposta, seja qual for a ordem.
 
 > O lock em memória cobre apenas uma instância do processo. Entre processos/réplicas, a exclusão real de corrida vem do índice único + da transação Mongo — que exige um replica set (Atlas já é um por padrão, mesmo no tier grátis; um standalone `mongod` não serve).
 
@@ -78,15 +78,16 @@ Dentro da transação: se já existe uma resposta para `(examId, questionId)` co
 
 `src/views/exam-app.tsx` registra `ExamApp` (`src/components/ExamApp`) como a view Skybridge da tool `create_exam`. Composição:
 
-- `ExamHeader` — título e botão de fullscreen (`useDisplayMode`).
+- `ExamHeader` — título e botões de modo de exibição (`useDisplayMode`).
 - `ExamProgress` — barra/contadores a partir de `progress`.
-- `QuestionCard` (+ `AlternativeList`, `AnswerFeedback`) — enunciado, alternativas selecionáveis, feedback pós-resposta.
+- `QuestionNavigator` — grid com uma célula numerada por questão (`snapshot.questions`), colorida por `status` (verde = correta, vermelha = incorreta, neutra = sem resposta) e `marked` (azul, tem prioridade sobre a cor de status); clicar chama `get_current_question` com o `questionId` da célula (navegação livre — qualquer questão, respondida ou não).
+- `QuestionCard` (+ `AlternativeList`, `AnswerFeedback`) — enunciado, alternativas selecionáveis, feedback pós-resposta, botão de marcar/desmarcar para revisão (`mark_question`).
 - `ExamResult` — relatório final e botão "Iniciar outra prova".
 
 Estado e sincronização:
 - `useToolInfo<"create_exam">()` dá o resultado inicial da tool que abriu a view.
 - `useViewState<{ examId }>()` persiste o `examId` para reaberturas da view, mas **nunca** é tratado como fonte de verdade — toda montagem re-consulta `get_exam_progress` e `get_current_question` via `useCallTool`.
-- Cada ação de UI (responder, pausar, retomar) chama a tool correspondente; o `useEffect` associado atualiza `snapshot`/`feedback`/`message` a partir da resposta.
+- Cada ação de UI (responder, navegar, marcar, pausar, retomar) chama a tool correspondente; o `useEffect` associado atualiza `snapshot`/`feedback`/`message` a partir da resposta. Navegar limpa a seleção/feedback locais e deixa a resposta da tool (que já traz `result` se a questão alvo estiver respondida) repovoar tudo.
 - Quando `snapshot.exam.status === "finished"` e ainda não há `report`, a view chama `finish_exam` automaticamente uma única vez (guard `finishing.current`).
 - "Iniciar outra prova" não cria uma nova tentativa localmente: usa `useSendFollowUpMessage` para pedir ao assistente que pergunte a disciplina (ou todas) e a quantidade de questões, e chame `create_exam` de novo.
 

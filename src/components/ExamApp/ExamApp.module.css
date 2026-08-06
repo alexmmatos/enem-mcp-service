@@ -10,6 +10,8 @@
   --success-soft: #e8f7f0;
   --danger: #b23b3b;
   --danger-soft: #fff0ef;
+  --info: #1c5fd6;
+  --info-soft: #e5edff;
   color: var(--ink);
   background: var(--surface-soft);
   border: 1px solid var(--line);
@@ -30,15 +32,25 @@
   --success-soft: #15372c;
   --danger: #ff9c96;
   --danger-soft: #422421;
+  --info: #8ab4ff;
+  --info-soft: #1c2b4d;
 }
 
 .topbar, .row, .actions, .metaRow { display: flex; align-items: center; gap: 10px; }
 .topbar { justify-content: space-between; margin-bottom: 16px; }
 .title { margin: 0; font-size: clamp(1.15rem, 3vw, 1.55rem); letter-spacing: -0.02em; }
 .eyebrow { margin: 0 0 4px; color: var(--accent); font-size: 0.72rem; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; }
-.layout { display: grid; grid-template-columns: minmax(190px, 0.72fr) minmax(0, 1.8fr); gap: 16px; }
+.layout { display: grid; grid-template-columns: minmax(260px, 340px) minmax(0, 1.8fr); gap: 16px; }
+.leftColumn { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .panel, .questionCard, .result { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 18px; }
-.panel { align-self: start; }
+.cardHeader { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 4px; }
+.navGrid { display: grid; grid-template-columns: repeat(4, minmax(44px, 64px)); gap: 9px; }
+.navCell { aspect-ratio: 1; display: grid; place-items: center; border-radius: 8px; border: 1px solid var(--line); background: var(--surface-soft); color: var(--ink); font-weight: 700; font-size: 0.92rem; padding: 0; cursor: pointer; }
+.navCell:disabled { opacity: 0.6; cursor: default; }
+.navCorrect { color: white; background: var(--success); border-color: var(--success); }
+.navIncorrect { color: white; background: var(--danger); border-color: var(--danger); }
+.navMarked { color: white; background: var(--info); border-color: var(--info); }
+.navCurrent { outline: 2px solid var(--accent); outline-offset: 2px; }
 .label { color: var(--muted); font-size: 0.76rem; margin-bottom: 3px; }
 .value { font-size: 0.96rem; font-weight: 700; margin: 0 0 15px; }
 .status { display: inline-flex; border-radius: 999px; padding: 5px 9px; background: var(--accent-soft); color: var(--accent); font-size: 0.75rem; font-weight: 800; }
@@ -80,7 +92,7 @@
 @media (max-width: 640px) {
   .shell { padding: 12px; border-radius: 15px; }
   .layout { grid-template-columns: 1fr; }
-  .panel { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; }
+  .panel:first-child { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 14px; }
   .panel .value { margin-bottom: 7px; }
   .progressArea { grid-column: 1 / -1; }
   .questionCard { padding: 15px; }

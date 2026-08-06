@@ -93,6 +93,10 @@ describe("ExamService", () => {
 
     const cached = await internal(ids[0]!);
     expect(cached.topic).toBe("Matemática");
+
+    expect(response.questions).toHaveLength(5);
+    expect(response.questions.every((q) => q.status === "unanswered" && !q.marked)).toBe(true);
+    expect(response.questions.map((q) => q.index)).toEqual([1, 2, 3, 4, 5]);
   });
 
   it("extrai imagens do contexto e de alternativas image-only", async () => {
@@ -215,12 +219,67 @@ describe("ExamService", () => {
     expect((await db.collection<ExamAttemptDoc>(ATTEMPTS_COLLECTION).findOne({ _id: created.exam.id }))!.currentQuestionIndex).toBe(1);
   });
 
-  it("rejeita uma questão diferente da atual", async () => {
-    const created = await create(2);
+  it("aceita responder uma questão diferente da atual (navegação livre)", async () => {
+    const created = await create(3);
     const attempt = await db.collection<ExamAttemptDoc>(ATTEMPTS_COLLECTION).findOne({ _id: created.exam.id });
     const ids = attempt!.questionIds;
-    await expect(service.submitAnswer({ examId: created.exam.id, questionId: ids[1]!, alternativeId: "A" }))
-      .rejects.toMatchObject({ code: "NOT_CURRENT_QUESTION" });
+    const last = await internal(ids[2]!);
+    const response = await service.submitAnswer({ examId: created.exam.id, questionId: last.id, alternativeId: last.correctAlternativeId });
+    expect(response.progress).toMatchObject({ answered: 1, correct: 1 });
+    expect(response.questions.find((q) => q.questionId === last.id)).toMatchObject({ status: "correct" });
+    expect(response.questions.find((q) => q.questionId === ids[0])).toMatchObject({ status: "unanswered" });
+  });
+
+  it("rejeita questão que não pertence à prova", async () => {
+    const created = await create(2);
+    await expect(service.submitAnswer({ examId: created.exam.id, questionId: "enem-2022-999", alternativeId: "A" }))
+      .rejects.toMatchObject({ code: "QUESTION_NOT_IN_EXAM" });
+  });
+
+  it("navega para uma questão específica e volta a mostrar o resultado se já respondida", async () => {
+    const created = await create(3);
+    const attempt = await db.collection<ExamAttemptDoc>(ATTEMPTS_COLLECTION).findOne({ _id: created.exam.id });
+    const ids = attempt!.questionIds;
+    const first = await internal(ids[0]!);
+    await service.submitAnswer({ examId: created.exam.id, questionId: first.id, alternativeId: first.correctAlternativeId });
+
+    const third = await service.getCurrentQuestion(created.exam.id, ids[2]);
+    expect(third.question?.id).toBe(ids[2]);
+    expect(third.result).toBeUndefined();
+
+    const backToFirst = await service.getCurrentQuestion(created.exam.id, ids[0]);
+    expect(backToFirst.question?.id).toBe(ids[0]);
+    expect(backToFirst.result).toMatchObject({ correct: true });
+
+    await expect(service.getCurrentQuestion(created.exam.id, "enem-2022-999"))
+      .rejects.toMatchObject({ code: "QUESTION_NOT_IN_EXAM" });
+  });
+
+  it("marca e desmarca uma questão para revisão", async () => {
+    const created = await create(2);
+    const questionId = created.question!.id;
+    const marked = await service.markQuestion({ examId: created.exam.id, questionId, marked: true });
+    expect(marked.questions.find((q) => q.questionId === questionId)).toMatchObject({ marked: true });
+
+    const unmarked = await service.markQuestion({ examId: created.exam.id, questionId, marked: false });
+    expect(unmarked.questions.find((q) => q.questionId === questionId)).toMatchObject({ marked: false });
+
+    await expect(service.markQuestion({ examId: created.exam.id, questionId: "enem-2022-999", marked: true }))
+      .rejects.toMatchObject({ code: "QUESTION_NOT_IN_EXAM" });
+  });
+
+  it("finaliza quando todas as questões são respondidas fora de ordem", async () => {
+    const created = await create(3);
+    const attempt = await db.collection<ExamAttemptDoc>(ATTEMPTS_COLLECTION).findOne({ _id: created.exam.id });
+    const ids = attempt!.questionIds;
+    const [q1, q2, q3] = await Promise.all(ids.map((id) => internal(id)));
+
+    await service.submitAnswer({ examId: created.exam.id, questionId: q3!.id, alternativeId: q3!.correctAlternativeId });
+    await service.submitAnswer({ examId: created.exam.id, questionId: q1!.id, alternativeId: q1!.correctAlternativeId });
+    expect((await service.getProgress(created.exam.id)).exam.status).toBe("in_progress");
+    const final = await service.submitAnswer({ examId: created.exam.id, questionId: q2!.id, alternativeId: q2!.correctAlternativeId });
+    expect(final.exam.status).toBe("finished");
+    expect(final.progress).toMatchObject({ answered: 3, correct: 3 });
   });
 
   it("rejeita resposta nova em prova finalizada", async () => {
