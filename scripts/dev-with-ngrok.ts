@@ -110,19 +110,8 @@ const port = await availablePort(preferredPort);
 if (port !== preferredPort) console.log(`Porta ${preferredPort} ocupada; usando ${port} para o Tech Exam.`);
 
 const skybridge = start(executable("skybridge"), ["dev", "--plain", "--port", String(port)], false);
-const ngrok = start("ngrok", ["http", String(port), "--log=stdout", "--log-format=json"], false);
-const tunnelUrl = ngrokUrl(ngrok);
-
 skybridge.stdout?.pipe(process.stdout);
 skybridge.stderr?.pipe(process.stderr);
-
-let ngrokErrors = "";
-ngrok.stderr?.on("data", (chunk: Buffer) => { ngrokErrors += chunk.toString(); });
-ngrok.stdout?.on("data", (chunk: Buffer) => {
-  const line = chunk.toString();
-  if (line.includes('"lvl":"eror"') || line.includes('"lvl":"crit"')) ngrokErrors += line;
-});
-
 skybridge.once("exit", (code) => {
   if (!stopping) {
     console.error(`\nSkybridge foi encerrado com código ${code ?? 1}.`);
@@ -130,23 +119,44 @@ skybridge.once("exit", (code) => {
   }
 });
 
-ngrok.once("exit", (code) => {
-  if (!stopping) {
-    console.error(`\nngrok foi encerrado com código ${code ?? 1}.`);
-    if (ngrokErrors.trim()) console.error(ngrokErrors.trim());
-    shutdown(code ?? 1);
+// ngrok expõe a instância local na internet — só faz sentido (e só deve ligar) em desenvolvimento.
+if (process.env.NODE_ENV !== "development") {
+  try {
+    await waitForSkybridge(port);
+    console.log(`\n  →  MCP local: http://localhost:${port}/mcp\n`);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : error);
+    shutdown(1);
   }
-});
+} else {
+  const ngrok = start("ngrok", ["http", String(port), "--log=stdout", "--log-format=json"], false);
+  const tunnelUrl = ngrokUrl(ngrok);
 
-try {
-  const [url] = await Promise.all([tunnelUrl, waitForSkybridge(port)]);
-  console.log("\n  🌐  Tech Exam disponível na internet");
-  console.log(`  →  MCP local: http://localhost:${port}/mcp`);
-  console.log(`  →  MCP público: ${url}/mcp`);
-  console.log("  →  Inspetor ngrok: http://127.0.0.1:4040");
-  console.log("  →  Ctrl+C encerra Skybridge e ngrok.\n");
-} catch (error) {
-  console.error(error instanceof Error ? error.message : error);
-  if (ngrokErrors.trim()) console.error(ngrokErrors.trim());
-  shutdown(1);
+  let ngrokErrors = "";
+  ngrok.stderr?.on("data", (chunk: Buffer) => { ngrokErrors += chunk.toString(); });
+  ngrok.stdout?.on("data", (chunk: Buffer) => {
+    const line = chunk.toString();
+    if (line.includes('"lvl":"eror"') || line.includes('"lvl":"crit"')) ngrokErrors += line;
+  });
+
+  ngrok.once("exit", (code) => {
+    if (!stopping) {
+      console.error(`\nngrok foi encerrado com código ${code ?? 1}.`);
+      if (ngrokErrors.trim()) console.error(ngrokErrors.trim());
+      shutdown(code ?? 1);
+    }
+  });
+
+  try {
+    const [url] = await Promise.all([tunnelUrl, waitForSkybridge(port)]);
+    console.log("\n  🌐  Tech Exam disponível na internet");
+    console.log(`  →  MCP local: http://localhost:${port}/mcp`);
+    console.log(`  →  MCP público: ${url}/mcp`);
+    console.log("  →  Inspetor ngrok: http://127.0.0.1:4040");
+    console.log("  →  Ctrl+C encerra Skybridge e ngrok.\n");
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : error);
+    if (ngrokErrors.trim()) console.error(ngrokErrors.trim());
+    shutdown(1);
+  }
 }
