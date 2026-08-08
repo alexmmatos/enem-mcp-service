@@ -41,12 +41,16 @@
 .title { margin: 0; font-size: clamp(1.15rem, 3vw, 1.55rem); letter-spacing: -0.02em; }
 .eyebrow { margin: 0 0 4px; color: var(--accent); font-size: 0.72rem; font-weight: 800; letter-spacing: 0.12em; text-transform: uppercase; }
 .layout { display: grid; grid-template-columns: minmax(260px, 340px) minmax(0, 1.8fr); gap: 16px; }
+.layoutFocus { grid-template-columns: 1fr; }
 .leftColumn { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
 .panel, .questionCard, .result { background: var(--surface); border: 1px solid var(--line); border-radius: 16px; padding: 18px; }
 .cardHeader { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 4px; flex-wrap: wrap; }
 .cardBody { position: relative; }
 .drawLayer { position: absolute; inset: 0; z-index: 5; touch-action: none; }
 .drawCanvas { width: 100%; height: 100%; display: block; }
+.drawToolbar { position: fixed; top: 50%; right: 16px; z-index: 10; display: flex; flex-direction: column; align-items: center; gap: 6px; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 6px; box-shadow: 0 6px 18px rgba(0, 0, 0, 0.15); }
+.dragHandle { width: 100%; display: grid; place-items: center; color: var(--muted); padding: 2px 0 4px; cursor: grab; touch-action: none; }
+.dragHandle:active { cursor: grabbing; }
 .navGrid { display: grid; grid-template-columns: repeat(4, minmax(44px, 64px)); gap: 9px; }
 .navCell { aspect-ratio: 1; display: grid; place-items: center; border-radius: 8px; border: 1px solid var(--line); background: var(--surface-soft); color: var(--ink); font-weight: 700; font-size: 0.92rem; padding: 0; cursor: pointer; }
 .navCell:disabled { opacity: 0.6; cursor: default; }
@@ -62,9 +66,12 @@
 .muted { color: var(--muted); font-size: 0.82rem; margin: 0; }
 .questionNumber { color: var(--accent); font-size: 0.78rem; font-weight: 800; }
 .statement { font-size: clamp(1.08rem, 2.5vw, 1.35rem); font-weight: 500; line-height: 1.4; margin: 9px 0 15px; white-space: pre-line; }
+.yearTag { display: block; color: var(--muted); font-weight: 700; margin-bottom: 4px; }
 .code { background: #111522; color: #e8ecf6; border-radius: 11px; overflow-x: auto; padding: 14px; font: 0.84rem/1.55 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre; }
-.statementImage { display: block; max-width: 100%; height: auto; border-radius: 11px; margin: 0 0 12px; }
-.alternativeImage { max-width: 100%; max-height: 160px; height: auto; border-radius: 8px; object-fit: contain; }
+.statementImage { display: block; max-width: 100%; height: auto; border-radius: 11px; margin: 0 0 12px; cursor: zoom-in; }
+.alternativeImage { max-width: 100%; max-height: 160px; height: auto; border-radius: 8px; object-fit: contain; cursor: zoom-in; }
+.lightbox { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: rgba(10, 10, 15, 0.85); padding: 24px; cursor: zoom-out; }
+.lightboxImage { max-width: 100%; max-height: 100%; border-radius: 8px; }
 .alternatives { border: 0; margin: 16px 0; padding: 0; display: grid; gap: 9px; }
 .alternative { display: grid; grid-template-columns: 28px 1fr; gap: 10px; align-items: center; width: 100%; text-align: left; border: 1px solid var(--line); border-radius: 12px; padding: 11px; color: var(--ink); background: var(--surface); }
 .alternative:hover { border-color: var(--accent); }

@@ -6,6 +6,7 @@ export interface PublicQuestion {
   id: string;
   topic: Topic;
   level: Level;
+  year: number;
   statement: string;
   images?: string[];
   code?: string;

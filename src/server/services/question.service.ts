@@ -44,6 +44,7 @@ export function toPublicQuestion(question: InternalQuestion): PublicQuestion {
     id: question.id,
     topic: asTopic(question.topic),
     level: asLevel(question.level),
+    year: question.year,
     statement,
     alternatives: question.alternatives,
     ...(images.length ? { images } : {}),
@@ -64,6 +65,7 @@ export function enemQuestionToData(question: EnemQuestion): QuestionDoc {
     _id: `enem-${question.year}-${question.index}`,
     topic: enemTopic(question.discipline),
     level: "enem",
+    year: question.year,
     statement,
     code: null,
     alternatives: question.alternatives.map(({ letter, text, file }) => ({

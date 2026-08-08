@@ -19,8 +19,9 @@ Sorteia `numberOfQuestions` questões oficiais do ENEM da `disciplina` pedida, d
 | --- | --- | --- |
 | `disciplina` | enum | `Linguagens` \| `Ciências Humanas` \| `Ciências da Natureza` \| `Matemática` \| `todas`; padrão `todas` |
 | `numberOfQuestions` | int | 1–50 |
-| `userId?` | string | 1–128 chars |
 | `sessionId?` | string | 1–128 chars; se omitido, o servidor gera um `randomUUID()` |
+
+`userId` não é mais um campo de input — vem do `sub` do token OAuth verificado (ver [architecture.md](./architecture.md#autenticação)), nunca de algo que o cliente possa forjar.
 
 Erros: `INSUFFICIENT_QUESTIONS` (menos questões disponíveis para essa `disciplina` do que o `numberOfQuestions` pedido, com `available`/`requested` em `details`), `ENEM_API_ERROR` (nenhuma prova semeada no MongoDB, ou documento fora do formato esperado).
 

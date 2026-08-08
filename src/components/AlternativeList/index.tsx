@@ -3,9 +3,12 @@ import type { Alternative } from "../../shared/types/exam.js";
 import styles from "../ExamApp/ExamApp.module.css";
 import { FormattedText } from "../FormattedText/index.js";
 
-interface Props { alternatives: Alternative[]; selected: string | null; disabled: boolean; onSelect: (id: string) => void }
+interface Props {
+  alternatives: Alternative[]; selected: string | null; disabled: boolean;
+  onSelect: (id: string) => void; onZoomImage: (url: string) => void;
+}
 
-export function AlternativeList({ alternatives, selected, disabled, onSelect }: Props) {
+export function AlternativeList({ alternatives, selected, disabled, onSelect, onZoomImage }: Props) {
   return <fieldset className={styles.alternatives} disabled={disabled} aria-label="Alternativas">
     {alternatives.map((alternative) => <button
       type="button"
@@ -16,8 +19,13 @@ export function AlternativeList({ alternatives, selected, disabled, onSelect }: 
     >
       <span className={styles.letter}>{alternative.id}</span>
       {alternative.image
-        ? <img src={assetUrl(alternative.image)} alt={`Alternativa ${alternative.id}`} className={styles.alternativeImage} />
-        : <span>{alternative.text ? <FormattedText text={alternative.text} /> : null}</span>}
+        ? <img
+            src={assetUrl(alternative.image)}
+            alt={`Alternativa ${alternative.id}`}
+            className={styles.alternativeImage}
+            onClick={(e) => { e.stopPropagation(); onZoomImage(assetUrl(alternative.image!)); }}
+          />
+        : <span data-field={`alt-${alternative.id}`}>{alternative.text ? <FormattedText text={alternative.text} /> : null}</span>}
     </button>)}
   </fieldset>;
 }

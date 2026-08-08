@@ -8,6 +8,7 @@ export interface QuestionDoc {
   _id: string;
   topic: string;
   level: string;
+  year: number;
   statement: string;
   code: string | null;
   alternatives: Alternative[];
@@ -19,6 +20,7 @@ export interface InternalQuestion {
   id: string;
   topic: string;
   level: string;
+  year: number;
   statement: string;
   code: string | null;
   alternatives: Alternative[];
@@ -31,6 +33,7 @@ function hydrateQuestion(doc: QuestionDoc): InternalQuestion {
     id: doc._id,
     topic: doc.topic,
     level: doc.level,
+    year: doc.year,
     statement: doc.statement,
     code: doc.code,
     alternatives: doc.alternatives,

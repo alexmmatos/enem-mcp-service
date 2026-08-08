@@ -63,6 +63,14 @@ Erros específicos: `INSUFFICIENT_QUESTIONS` (prova daquele ano tem menos quest�
 
 `InternalQuestion` (repositório) inclui `correctAlternativeId` e `explanation`. `toPublicQuestion` (`question.service.ts`) projeta apenas `id, topic, level, statement, code?, alternatives` — o gabarito nunca chega ao cliente antes de a resposta existir. `AnswerResult` (com gabarito e explicação) só é construído depois que a resposta já foi persistida.
 
+## Autenticação
+
+O servidor age como *resource server* OAuth do MCP (`src/server.ts`, terceiro argumento do `McpServer`, via `clerkProvider` do `skybridge/server`). Clerk é o authorization server — não o Google diretamente — porque o protocolo MCP exige Dynamic Client Registration (cada cliente MCP como ChatGPT/Claude se registra sozinho na hora de conectar), e o Google não expõe `registration_endpoint` (confirmado no discovery `https://accounts.google.com/.well-known/openid-configuration`). "Sign in with Google" fica configurado como conexão social dentro da instância Clerk (Dynamic Client Registration e emissão de token JWT precisam estar habilitados nas configurações do Clerk).
+
+Exige `CLERK_DOMAIN` (Frontend API URL da instância, ex. `seu-app.clerk.accounts.dev`) — sem essa env var o servidor recusa subir. Como não há `auth`/`securitySchemes` nas tools registradas, vale o padrão seguro do Skybridge: todas exigem login (nenhuma usa `allowsAnonymous`).
+
+`create_exam` (`tools/create-exam.ts`) extrai `userId` do `sub` do token verificado (`extra.authInfo.extra.subject` — populado por `createJwksVerifier` a partir do payload do JWT), não mais de um campo de input; um cliente não tem como forjar o `userId` de outra pessoa.
+
 ## Concorrência e idempotência
 
 `submitAnswer` (`exam.service.ts`) combina duas defesas:

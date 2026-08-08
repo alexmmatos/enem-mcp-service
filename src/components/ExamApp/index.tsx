@@ -6,6 +6,7 @@ import type { DrawTool } from "../DrawLayer/index.js";
 import { ExamHeader } from "../ExamHeader/index.js";
 import { ExamProgress } from "../ExamProgress/index.js";
 import { ExamResult } from "../ExamResult/index.js";
+import { plainTextOffset, toggleUnderline } from "../FormattedText/underline.js";
 import { QuestionCard } from "../QuestionCard/index.js";
 import { QuestionNavigator } from "../QuestionNavigator/index.js";
 import styles from "./ExamApp.module.css";
@@ -25,6 +26,17 @@ function errorMessage(value: unknown): string | null {
 function structured(data: unknown): Structured | undefined {
   if (typeof data !== "object" || data === null || !("structuredContent" in data)) return undefined;
   return (data as { structuredContent?: Structured }).structuredContent;
+}
+
+function disciplinaLabel(disciplina: string): string {
+  return disciplina === "todas" ? "Todas as disciplinas" : disciplina;
+}
+
+// "statement" ou "alt-{id}" — mesma convenção do data-field em QuestionCard/AlternativeList.
+function sourceTextFor(field: string, question: PublicQuestion): string | undefined {
+  if (field === "statement") return question.statement;
+  const altId = field.startsWith("alt-") ? field.slice(4) : undefined;
+  return altId ? question.alternatives.find((a) => a.id === altId)?.text : undefined;
 }
 
 function formatElapsed(totalSeconds: number): string {
@@ -47,7 +59,10 @@ export function ExamApp() {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [tool, setTool] = useState<DrawTool>("hand");
   const [color, setColor] = useState("#5b45e0");
+  const [underlineColor, setUnderlineColor] = useState("#e04545");
   const [drawingsByQuestion, setDrawingsByQuestion] = useState<Record<string, string>>({});
+  const [underlines, setUnderlines] = useState<Record<string, string>>({});
+  const [focusMode, setFocusMode] = useState(false);
   const hydrated = useRef<string | null>(null);
   const finishing = useRef(false);
   const lastInitial = useRef<unknown>(undefined);
@@ -182,46 +197,121 @@ export function ExamApp() {
     markTool.callTool({ examId: snapshot.exam.id, questionId: snapshot.question.id, marked: !current?.marked });
   };
 
+  // Computado antes dos retornos antecipados (regra dos hooks: o efeito de atalhos abaixo precisa
+  // rodar sempre na mesma ordem) — por isso tolerante a snapshot/question ainda não existirem.
+  const view = feedback && answeredView
+    ? answeredView
+    : { question: snapshot?.question, current: snapshot?.progress.current ?? 0, total: snapshot?.progress.total ?? 0 };
+  const question = view.question ?? null;
+
+  // Só as que não usam modificador (Ctrl/Alt/Cmd) nem teclas de função — essas ficam pro
+  // navegador/host. Como a view roda num iframe próprio, o keydown só dispara quando o foco do
+  // teclado está dentro dela, então nunca "rouba" atalho do dashboard da IA.
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (!snapshot || !question || busy || snapshot.exam.status === "paused") return;
+      if (document.activeElement instanceof HTMLInputElement) return;
+      if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        const ids = snapshot.questions.map((q) => q.questionId);
+        const idx = ids.indexOf(question.id);
+        const targetId = idx === -1 ? undefined : ids[e.key === "ArrowLeft" ? idx - 1 : idx + 1];
+        if (targetId) { e.preventDefault(); navigate(targetId); }
+        return;
+      }
+
+      if (!feedback) {
+        const altIndex = "12345".indexOf(e.key);
+        const alternative = altIndex === -1 ? undefined : question.alternatives[altIndex];
+        if (alternative) { e.preventDefault(); setSelected(alternative.id); return; }
+      }
+
+      if (e.key === "Enter" && !(document.activeElement instanceof HTMLButtonElement)) {
+        e.preventDefault();
+        if (feedback) next();
+        else if (selected) submit();
+        return;
+      }
+
+      if (e.key === "m" || e.key === "M") { e.preventDefault(); toggleMark(); return; }
+      if (e.key === "f" || e.key === "F") { e.preventDefault(); setFocusMode((v) => !v); }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [snapshot, question, feedback, selected, busy, navigate, submit, next, toggleMark]);
+
   if (isInitialPending || !snapshot) return <div className={`${styles.shell} ${theme === "dark" ? styles.dark : ""}`}><div className={styles.loading}>Restaurando sua prova…</div></div>;
   if (report) return <div className={`${styles.shell} ${theme === "dark" ? styles.dark : ""}`} data-llm={`Prova finalizada com ${report.percentage}% de aproveitamento.`}><ExamResult report={report} onRestart={() => sendFollowUp("Quero iniciar outra prova do ENEM. Pergunte a disciplina (ou todas) e a quantidade de questões.")} /></div>;
 
-  return <div className={`${styles.shell} ${theme === "dark" ? styles.dark : ""}`} data-llm={`Prova ENEM — ${snapshot.exam.disciplina}, ${snapshot.progress.answered} de ${snapshot.progress.total} respondidas.`}>
-    <ExamHeader displayMode={displayMode} onSetDisplayMode={setDisplayMode} />
+  return <div className={`${styles.shell} ${theme === "dark" ? styles.dark : ""}`} data-llm={`Prova ENEM — ${disciplinaLabel(snapshot.exam.disciplina)}, ${snapshot.progress.answered} de ${snapshot.progress.total} respondidas.`}>
+    <ExamHeader displayMode={displayMode} onSetDisplayMode={setDisplayMode} focusMode={focusMode} onToggleFocusMode={() => setFocusMode((v) => !v)} />
     {message ? <p className={styles.error} role="alert">{message}</p> : null}
-    <div className={styles.layout}>
-      <div className={styles.leftColumn}>
-        <aside className={styles.panel}>
-          <div><div className={styles.label}>Prova</div><p className={styles.value}>ENEM — {snapshot.exam.disciplina}</p></div>
-          <div><div className={styles.label}>Disciplina</div><p className={styles.value}>{snapshot.question?.topic ?? "—"}</p></div>
-          <div><div className={styles.label}>Pontuação</div><p className={styles.value}>{snapshot.progress.correct} acerto(s)</p></div>
-          <div><div className={styles.label}>Status</div><span className={styles.status}>{snapshot.exam.status === "paused" ? "Pausada" : "Em andamento"}</span></div>
-          <div><div className={styles.label}>Tempo</div><p className={styles.value}>{formatElapsed(elapsedSeconds)}</p></div>
-          <ExamProgress progress={snapshot.progress} />
-          <div className={styles.actions}>
-            {snapshot.exam.status === "paused"
-              ? <button className={styles.secondary} type="button" disabled={busy} onClick={() => resumeTool.callTool({ examId: snapshot.exam.id })}>Retomar</button>
-              : <button className={styles.ghost} type="button" disabled={busy} onClick={() => pauseTool.callTool({ examId: snapshot.exam.id })}>Pausar</button>}
-          </div>
-        </aside>
-        <QuestionNavigator
-          questions={snapshot.questions}
-          currentQuestionId={snapshot.question?.id}
-          disabled={busy || snapshot.exam.status === "paused"}
-          onNavigate={navigate}
-        />
-      </div>
+    <div className={`${styles.layout} ${focusMode ? styles.layoutFocus : ""}`}>
+      {focusMode ? null : (
+        <div className={styles.leftColumn}>
+          <aside className={styles.panel}>
+            <div><div className={styles.label}>Prova</div><p className={styles.value}>ENEM — {disciplinaLabel(snapshot.exam.disciplina)}</p></div>
+            <div><div className={styles.label}>Disciplina</div><p className={styles.value}>{snapshot.question?.topic ?? "—"}</p></div>
+            <div><div className={styles.label}>Pontuação</div><p className={styles.value}>{snapshot.progress.correct} acerto(s)</p></div>
+            <div><div className={styles.label}>Status</div><span className={styles.status}>{snapshot.exam.status === "paused" ? "Pausada" : "Em andamento"}</span></div>
+            <div><div className={styles.label}>Tempo</div><p className={styles.value}>{formatElapsed(elapsedSeconds)}</p></div>
+            <ExamProgress progress={snapshot.progress} />
+            <div className={styles.actions}>
+              {snapshot.exam.status === "paused"
+                ? <button className={styles.secondary} type="button" disabled={busy} onClick={() => resumeTool.callTool({ examId: snapshot.exam.id })}>Retomar</button>
+                : <button className={styles.ghost} type="button" disabled={busy} onClick={() => pauseTool.callTool({ examId: snapshot.exam.id })}>Pausar</button>}
+            </div>
+          </aside>
+          <QuestionNavigator
+            questions={snapshot.questions}
+            currentQuestionId={snapshot.question?.id}
+            disabled={busy || snapshot.exam.status === "paused"}
+            onNavigate={navigate}
+          />
+        </div>
+      )}
       {(() => {
-        const view = feedback && answeredView ? answeredView : { question: snapshot.question, current: snapshot.progress.current, total: snapshot.progress.total };
-        const marked = view.question ? (snapshot.questions.find((q) => q.questionId === view.question!.id)?.marked ?? false) : false;
-        const drawing = view.question ? (drawingsByQuestion[view.question.id] ?? null) : null;
-        return view.question
-          ? <QuestionCard
-              question={view.question} current={view.current} total={view.total} selected={selected} marked={marked}
-              tool={tool} color={color} drawing={drawing} busy={busy || snapshot.exam.status === "paused"} feedback={feedback}
-              onSelect={setSelected} onSubmit={submit} onNext={next} onToggleMark={toggleMark}
-              onToolChange={setTool} onColorChange={setColor} onDrawingChange={(image) => setDrawingsByQuestion((prev) => ({ ...prev, [view.question!.id]: image }))}
-            />
-          : <main className={styles.questionCard}><p>Calculando o resultado…</p></main>;
+        if (!question) return <main className={styles.questionCard}><p>Calculando o resultado…</p></main>;
+
+        const marked = snapshot.questions.find((q) => q.questionId === question.id)?.marked ?? false;
+        const drawing = drawingsByQuestion[question.id] ?? null;
+        const underlineKey = (field: string) => `${question.id}|${field}`;
+        const effectiveQuestion: PublicQuestion = {
+          ...question,
+          statement: underlines[underlineKey("statement")] ?? question.statement,
+          alternatives: question.alternatives.map((alt) => (
+            alt.text !== undefined ? { ...alt, text: underlines[underlineKey(`alt-${alt.id}`)] ?? alt.text } : alt
+          )),
+        };
+
+        const applyUnderline = () => {
+          const selection = window.getSelection();
+          if (!selection || selection.isCollapsed || selection.rangeCount === 0) return;
+          const range = selection.getRangeAt(0);
+          const anchor = range.commonAncestorContainer;
+          const anchorEl = anchor.nodeType === Node.TEXT_NODE ? anchor.parentElement : (anchor as Element);
+          const container = anchorEl?.closest<HTMLElement>("[data-field]");
+          const field = container?.dataset.field;
+          if (!container || !field) return;
+
+          const baseSource = underlines[underlineKey(field)] ?? sourceTextFor(field, question);
+          if (baseSource === undefined) return;
+
+          const start = plainTextOffset(container, range.startContainer, range.startOffset);
+          const end = plainTextOffset(container, range.endContainer, range.endOffset);
+          const updated = toggleUnderline(baseSource, Math.min(start, end), Math.max(start, end), underlineColor);
+          setUnderlines((prev) => ({ ...prev, [underlineKey(field)]: updated }));
+          selection.removeAllRanges();
+        };
+
+        return <QuestionCard
+          question={effectiveQuestion} current={view.current} total={view.total} selected={selected} marked={marked}
+          tool={tool} color={color} drawing={drawing} busy={busy || snapshot.exam.status === "paused"} feedback={feedback}
+          onSelect={setSelected} onSubmit={submit} onNext={next} onToggleMark={toggleMark}
+          onToolChange={setTool} onColorChange={setColor} onDrawingChange={(image) => setDrawingsByQuestion((prev) => ({ ...prev, [question.id]: image }))}
+          onUnderline={applyUnderline} underlineColor={underlineColor} onUnderlineColorChange={setUnderlineColor}
+        />;
       })()}
     </div>
   </div>;

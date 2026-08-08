@@ -28,7 +28,7 @@ Um documento por tentativa de prova.
 | Campo | Tipo | Observação |
 | --- | --- | --- |
 | `_id` | string (`randomUUID()`) | é o `examId` usado por todas as tools |
-| `userId?` | string | opcional; **nunca** é e-mail — ver [SPEC.md](../SPEC.md) |
+| `userId?` | string | `sub` do token OAuth verificado (Clerk) na hora da criação; ausente se o token não trouxer `sub`. Nunca vem de input do cliente — ver [architecture.md](./architecture.md#autenticação) |
 | `sessionId` | string | gerado com `randomUUID()` se não informado |
 | `status` | string | `in_progress` \| `paused` \| `finished` |
 | `topic` | string | sempre `"ENEM"` |

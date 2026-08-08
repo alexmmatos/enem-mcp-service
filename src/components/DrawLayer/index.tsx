@@ -90,10 +90,12 @@ export function DrawLayer({ tool, color, image, onChange }: Props) {
     window.addEventListener("pointerup", handleWindowPointerUp);
   };
 
+  const cursor = tool === "pencil" ? PENCIL_CURSOR : ERASER_CURSOR;
+
   return <div
     ref={containerRef}
     className={styles.drawLayer}
-    style={{ pointerEvents: tool === "hand" ? "none" : "auto", cursor: tool === "pencil" ? PENCIL_CURSOR : ERASER_CURSOR }}
+    style={{ pointerEvents: tool === "hand" ? "none" : "auto", cursor }}
     onPointerDown={handlePointerDown}
   >
     <canvas ref={canvasRef} className={styles.drawCanvas} />
