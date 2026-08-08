@@ -7,7 +7,7 @@
   "scripts": {
     "dev": "tsx scripts/dev-with-ngrok.ts",
     "dev:local": "skybridge dev",
-    "dev:tunnel": "tsx scripts/dev-with-ngrok.ts",
+    "dev:tunnel": "tsx scripts/dev-with-ngrok.ts --ngrok",
     "dev:alpic": "skybridge dev --tunnel",
     "build": "skybridge build",
     "start": "skybridge start",

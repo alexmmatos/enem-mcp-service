@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useDisplayMode, useLayout, useSendFollowUpMessage, useViewState } from "skybridge/web";
 import { useCallTool, useToolInfo } from "../../helpers.js";
 import type { ExamReport, ExamToolResponse, FinishExamResponse, PublicQuestion, ToolErrorResponse } from "../../shared/types/exam.js";
+import type { DrawTool } from "../DrawLayer/index.js";
 import { ExamHeader } from "../ExamHeader/index.js";
 import { ExamProgress } from "../ExamProgress/index.js";
 import { ExamResult } from "../ExamResult/index.js";
@@ -44,6 +45,9 @@ export function ExamApp() {
   const [answeredView, setAnsweredView] = useState<{ question: PublicQuestion; current: number; total: number } | null>(null);
   const [message, setMessage] = useState<string | null>(errorMessage(output));
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
+  const [tool, setTool] = useState<DrawTool>("hand");
+  const [color, setColor] = useState("#5b45e0");
+  const [drawingsByQuestion, setDrawingsByQuestion] = useState<Record<string, string>>({});
   const hydrated = useRef<string | null>(null);
   const finishing = useRef(false);
   const lastInitial = useRef<unknown>(undefined);
@@ -209,8 +213,14 @@ export function ExamApp() {
       {(() => {
         const view = feedback && answeredView ? answeredView : { question: snapshot.question, current: snapshot.progress.current, total: snapshot.progress.total };
         const marked = view.question ? (snapshot.questions.find((q) => q.questionId === view.question!.id)?.marked ?? false) : false;
+        const drawing = view.question ? (drawingsByQuestion[view.question.id] ?? null) : null;
         return view.question
-          ? <QuestionCard question={view.question} current={view.current} total={view.total} selected={selected} marked={marked} busy={busy || snapshot.exam.status === "paused"} feedback={feedback} onSelect={setSelected} onSubmit={submit} onNext={next} onToggleMark={toggleMark} />
+          ? <QuestionCard
+              question={view.question} current={view.current} total={view.total} selected={selected} marked={marked}
+              tool={tool} color={color} drawing={drawing} busy={busy || snapshot.exam.status === "paused"} feedback={feedback}
+              onSelect={setSelected} onSubmit={submit} onNext={next} onToggleMark={toggleMark}
+              onToolChange={setTool} onColorChange={setColor} onDrawingChange={(image) => setDrawingsByQuestion((prev) => ({ ...prev, [view.question!.id]: image }))}
+            />
           : <main className={styles.questionCard}><p>Calculando o resultado…</p></main>;
       })()}
     </div>

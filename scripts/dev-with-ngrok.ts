@@ -119,8 +119,8 @@ skybridge.once("exit", (code) => {
   }
 });
 
-// ngrok expõe a instância local na internet — só faz sentido (e só deve ligar) em desenvolvimento.
-if (process.env.NODE_ENV !== "development") {
+// ngrok expõe a instância local na internet — só liga em desenvolvimento, ou se pedido explicitamente com --ngrok.
+if (process.env.NODE_ENV !== "development" && !process.argv.includes("--ngrok")) {
   try {
     await waitForSkybridge(port);
     console.log(`\n  →  MCP local: http://localhost:${port}/mcp\n`);
