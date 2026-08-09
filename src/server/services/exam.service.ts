@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { ClientSession, Db, MongoClient } from "mongodb";
 import { disciplineValueFromLabel, EXAM_STATUSES, LEVELS, TOPICS, type ExamStatus, type Level, type Topic } from "../../shared/constants/exam.js";
 import type { AnswerResult, ExamProgress, ExamToolResponse, QuestionStatus } from "../../shared/types/exam.js";
+import { EXAM_QUESTIONS_CACHE_TTL_SECONDS, examQuestionsCacheKey, redis } from "../cache.js";
 import { db as defaultDb, mongoClient as defaultMongoClient } from "../db.js";
 import { ExamError } from "../errors/exam-error.js";
 import { fetchEnemQuestionsByDiscipline } from "../repositories/enem.repository.js";
@@ -167,16 +168,26 @@ export class ExamService {
     // A integração fala em label ("Ciências da Natureza") ou "todas"; enem_questions.discipline
     // guarda o value bruto do ENEM ("ciencias-natureza") — traduz só pra consultar.
     const discipline = args.disciplina === "todas" ? "all" : (disciplineValueFromLabel(args.disciplina) ?? args.disciplina);
-    const fetched = await fetchEnemQuestionsByDiscipline(this.db, discipline, args.numberOfQuestions);
-    if (fetched.length < args.numberOfQuestions) {
-      throw new ExamError(
-        "INSUFFICIENT_QUESTIONS",
-        `Só há ${fetched.length} questões disponíveis para "${args.disciplina}".`,
-        { available: fetched.length, requested: args.numberOfQuestions },
-      );
+    const cacheKey = examQuestionsCacheKey(discipline, args.numberOfQuestions);
+
+    // Mesma seleção de questões (por disciplina + quantidade) reaproveitada por 6h — só o $sample
+    // e o upsert do primeiro pedido tocam o Mongo; os seguintes reusam os IDs já escolhidos. Cada
+    // cliente ainda ganha sua própria tentativa (exam_attempts) nova, com progresso isolado.
+    let questionIds = (await redis?.get<string[]>(cacheKey)) ?? null;
+    if (!questionIds) {
+      const fetched = await fetchEnemQuestionsByDiscipline(this.db, discipline, args.numberOfQuestions);
+      if (fetched.length < args.numberOfQuestions) {
+        throw new ExamError(
+          "INSUFFICIENT_QUESTIONS",
+          `Só há ${fetched.length} questões disponíveis para "${args.disciplina}".`,
+          { available: fetched.length, requested: args.numberOfQuestions },
+        );
+      }
+      const data = fetched.map((question) => enemQuestionToData(question));
+      await upsertQuestions(this.db, data);
+      questionIds = data.map((item) => item._id);
+      await redis?.set(cacheKey, questionIds, { ex: EXAM_QUESTIONS_CACHE_TTL_SECONDS });
     }
-    const data = fetched.map((question) => enemQuestionToData(question));
-    await upsertQuestions(this.db, data);
 
     const now = new Date();
     const attempt: ExamAttemptDoc = {
@@ -187,7 +198,7 @@ export class ExamService {
       topic: "ENEM",
       level: "enem",
       disciplina: args.disciplina,
-      questionIds: data.map((item) => item._id),
+      questionIds,
       currentQuestionIndex: 0,
       markedQuestionIds: [],
       score: 0,

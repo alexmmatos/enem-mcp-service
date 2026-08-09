@@ -14,13 +14,14 @@
     "deploy": "alpic deploy",
     "lint": "eslint .",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.tools.json --noEmit",
-    "test": "MONGODB_URI=mongodb://unused vitest run --no-file-parallelism",
+    "test": "MONGODB_URI=mongodb://unused UPSTASH_REDIS_REST_URL= UPSTASH_REDIS_REST_TOKEN= vitest run --no-file-parallelism",
     "test:watch": "vitest",
     "seed:mongo": "tsx scripts/seed-mongo.ts",
     "upload:cloudinary": "tsx scripts/upload-cloudinary.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@upstash/redis": "^1.38.2",
     "cloudinary": "^2.10.0",
     "mongodb": "^7.5.0",
     "react": "^19.2.8",

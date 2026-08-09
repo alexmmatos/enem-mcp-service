@@ -33,20 +33,48 @@ export function DrawLayer({ tool, color, image, onChange }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const last = useRef<{ x: number; y: number } | null>(null);
   const drawing = useRef(false);
+  const sized = useRef(false);
 
+  // Alguns hosts MCP (ex.: ChatGPT, Claude) montam o iframe num tamanho zerado/errado e só
+  // redimensionam depois pra caber o conteúdo — medir uma vez só no mount (como antes) deixava o
+  // buffer de pixels do canvas preso nesse tamanho inicial errado, e todo traço saía fora dos
+  // limites reais (nada aparecia, mesmo com pointerdown/pointermove funcionando). ResizeObserver
+  // resiza de verdade sempre que o container muda, preservando o desenho já feito.
   useEffect(() => {
     const canvas = canvasRef.current;
     const container = containerRef.current;
     if (!canvas || !container) return;
-    const rect = container.getBoundingClientRect();
-    canvas.width = rect.width;
-    canvas.height = rect.height;
-    if (!image) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-    const img = new Image();
-    img.onload = () => ctx.drawImage(img, 0, 0);
-    img.src = image;
+
+    const applySize = () => {
+      const rect = container.getBoundingClientRect();
+      const width = Math.round(rect.width);
+      const height = Math.round(rect.height);
+      if (width === 0 || height === 0) return;
+      if (canvas.width === width && canvas.height === height) return;
+      const ctx = canvas.getContext("2d");
+
+      if (!sized.current) {
+        sized.current = true;
+        canvas.width = width;
+        canvas.height = height;
+        if (ctx && image) {
+          const img = new Image();
+          img.onload = () => ctx.drawImage(img, 0, 0);
+          img.src = image;
+        }
+        return;
+      }
+
+      const snapshot = ctx && canvas.width > 0 && canvas.height > 0 ? ctx.getImageData(0, 0, canvas.width, canvas.height) : null;
+      canvas.width = width;
+      canvas.height = height;
+      if (ctx && snapshot) ctx.putImageData(snapshot, 0, 0);
+    };
+
+    applySize();
+    const observer = new ResizeObserver(applySize);
+    observer.observe(container);
+    return () => observer.disconnect();
   }, []);
 
   const pointFromClient = (clientX: number, clientY: number): { x: number; y: number } => {
