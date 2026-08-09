@@ -15,17 +15,17 @@ const standardMeta = (invoking: string, invoked: string) => ({
   "openai/toolInvocation/invoked": invoked,
 });
 
-const clerkDomain = process.env.CLERK_DOMAIN;
-if (!clerkDomain) throw new Error("Defina CLERK_DOMAIN antes de iniciar o servidor (Frontend API URL da instância Clerk).");
-
 // Clerk é o authorization server do MCP (suporta Dynamic Client Registration, exigido pelo
 // protocolo); "Sign in with Google" fica configurado como conexão social dentro do Clerk — o
 // usuário final ainda loga com a conta Google, só que quem o MCP client (ChatGPT/Claude)
 // registra e verifica é o Clerk, não o Google diretamente (que não suporta DCR).
+// Desativado por enquanto: sem CLERK_DOMAIN definido, o servidor sobe sem oauth (todas as tools
+// ficam anônimas, como antes) — não precisa mexer em código pra ligar de novo, só a env var.
+const clerkDomain = process.env.CLERK_DOMAIN;
 const server = new McpServer(
   { name: "tech-exam-mcp", version: "1.0.0" },
   { capabilities: {} },
-  { oauth: await clerkProvider({ domain: clerkDomain, baseUrl: "https://enem-mcp.vercel.app" }) },
+  clerkDomain ? { oauth: await clerkProvider({ domain: clerkDomain, baseUrl: "https://enem-mcp.vercel.app" }) } : {},
 )
   .registerTool(
     {
