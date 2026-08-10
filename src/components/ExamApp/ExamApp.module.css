@@ -17,6 +17,7 @@
   border: 1px solid var(--line);
   border-radius: 20px;
   padding: 18px;
+  padding-bottom: 64px;
   min-height: 380px;
 }
 
