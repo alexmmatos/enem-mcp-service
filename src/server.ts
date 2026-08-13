@@ -37,6 +37,10 @@ const server = new McpServer(
       view: {
         component: "exam-app",
         description: "Interface interativa de uma prova de tecnologia.",
+        // Sem isso, a CSP do iframe (host Claude) só libera o próprio domínio do MCP
+        // server como origem de imagem — as imagens das questões, hospedadas no
+        // Cloudinary, ficam bloqueadas silenciosamente.
+        csp: { resourceDomains: ["res.cloudinary.com"] },
       },
     },
     createExam,
